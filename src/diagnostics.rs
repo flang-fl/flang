@@ -21,9 +21,14 @@ pub trait PrintDiagnostics {
     fn print_diagnostics(&self, file_manager: &mut SourceFileManager);
 }
 
-impl PrintDiagnostics for Vec<Diagnostic> {
+impl PrintDiagnostics for [Diagnostic] {
     fn print_diagnostics(&self, file_manager: &mut SourceFileManager) {
         for diagnostic in self.iter() {
+            let primary_color = match diagnostic.severity {
+                Severity::Error => Color::Red,
+                Severity::Warning => Color::Yellow,
+            };
+
             let mut report = Report::build(match diagnostic.severity {
                 Severity::Error => ReportKind::Error,
                 Severity::Warning => ReportKind::Warning,
@@ -32,7 +37,7 @@ impl PrintDiagnostics for Vec<Diagnostic> {
                 .with_label(
                     AriadneLabel::new(diagnostic.primary.span)
                         .with_message(&diagnostic.primary.text)
-                        .with_color(Color::Red),
+                        .with_color(primary_color),
                 );
 
             for label in &diagnostic.others {

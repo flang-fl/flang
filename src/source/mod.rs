@@ -5,12 +5,6 @@ use ariadne::Source;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SourceId(usize);
 
-impl AddAssign<usize> for SourceId {
-    fn add_assign(&mut self, x: usize) {
-        self.0 += x;
-    }
-}
-
 pub struct SourceFileManager {
     files: Vec<SourceFile>,
 }
