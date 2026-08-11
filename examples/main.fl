@@ -1,0 +1,3 @@
+comp @ main = fn() -> u32 {
+    return 5;
+}
