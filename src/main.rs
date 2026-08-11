@@ -1,11 +1,13 @@
 use std::{env, fs};
 use crate::diagnostics::PrintDiagnostics;
+use crate::parser::Parser;
 use crate::source::SourceFileManager;
 use crate::tokenizer::Tokenizer;
 
 pub mod source;
 pub mod diagnostics;
 pub mod tokenizer;
+mod parser;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -32,6 +34,18 @@ fn main() {
         Ok(tokens) => {
             for token in &tokens {
                 println!("{:?}", token);
+            }
+
+            let mut parser = Parser::new(&file, &tokens);
+            let result = parser.parse();
+            
+            match result {
+                Err(diagnostics) => {
+                    diagnostics.print_diagnostics(&mut file_manager);
+                }
+                Ok(program) => {
+                    println!("{:#?}", program);
+                }
             }
         }
     }

@@ -169,7 +169,7 @@ impl<'src> Tokenizer<'src> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Token {
     pub span: Span,
     pub kind: TokenKind,

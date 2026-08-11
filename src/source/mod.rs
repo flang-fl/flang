@@ -72,6 +72,11 @@ impl SourceFile {
             end
         }
     }
+    
+    pub fn fromto(&self, start_span: Span, end_span: Span) -> Span {
+        assert_eq!(start_span.source, end_span.source);
+        return self.span(start_span.start, end_span.end);
+    }
 
     pub fn span_text(&self, span: Span) -> &str {
         &self.source.text()[span.start..span.end]
