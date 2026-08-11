@@ -73,6 +73,10 @@ impl SourceFile {
         }
     }
 
+    pub fn span_text(&self, span: Span) -> &str {
+        &self.source.text()[span.start..span.end]
+    }
+
     pub fn text(&self) -> &str {
         self.source.text()
     }

@@ -1,8 +1,10 @@
+use std::str::Chars;
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceFile, Span};
 
 pub struct Tokenizer<'src> {
     source: &'src SourceFile,
+    chars: Chars<'src>,
     index: usize,
     tokens: Vec<Token>,
     diagnostics: Vec<Diagnostic>,
@@ -12,6 +14,7 @@ impl<'src> Tokenizer<'src> {
     pub fn new(source: &'src SourceFile) -> Self {
         Tokenizer {
             source,
+            chars: source.text().chars(),
             index: 0,
             diagnostics: Vec::new(),
             tokens: Vec::new(),
@@ -66,10 +69,28 @@ impl<'src> Tokenizer<'src> {
         while let Some(next) = self.peek() && (next.is_ascii_alphanumeric() || next == '_') {
             self.next();
         }
+
+        let span = self.source.span(start, self.index);
+        
+        let kind = if let Some(k) = 
+            Self::keyword(self.source.span_text(span)) { k } else {
+            TokenKind::Identifier
+        };
+
         Ok(Token {
-            span: self.source.span(start, self.index),
-            kind: TokenKind::Identifier,
+            span,
+            kind,
         })
+    }
+
+    fn keyword(identifier: &str) -> Option<TokenKind> {
+        match identifier {
+            "fn" => Some(TokenKind::Fn),
+            "comp" => Some(TokenKind::Comp),
+            "return" => Some(TokenKind::Return),
+
+            _ => None,
+        }
     }
 
     fn tokenize_number_literal(&mut self) -> Result<Token, Diagnostic> {
@@ -130,16 +151,21 @@ impl<'src> Tokenizer<'src> {
     }
 
     fn peek(&self) -> Option<char> {
-        self.source.text().chars().nth(self.index)
+        self.chars.clone().next()
     }
 
     fn peek_offset(&self, offset: isize) -> Option<char> {
-        self.source.text().chars().nth((self.index as isize + offset) as usize)
+        self.chars.clone().nth(offset as usize)
     }
 
     fn next(&mut self) -> Option<char> {
-        self.index += 1;
-        self.peek_offset(-1)
+        let next = self.chars.next();
+
+        if next.is_some() {
+            self.index += 1;
+        }
+
+        next
     }
 }
 
