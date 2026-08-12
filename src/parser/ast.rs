@@ -22,7 +22,7 @@ pub struct Binding {
     pub mutable: bool,
     pub name: Span,
     pub type_annotation: Option<TypeExpression>,
-    pub initializer: Expression,
+    pub expression: Expression,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +47,7 @@ pub enum ExpressionData {
 #[derive(Debug, Clone)]
 pub struct FunctionExpression {
     pub parameters: Vec<Parameter>,
-    pub return_type: Option<TypeExpression>,
+    pub return_type: TypeExpression,
     pub body: Block,
 }
 
@@ -67,6 +67,7 @@ pub struct TypeExpression {
 #[derive(Debug, Clone)]
 pub enum TypeExpressionData {
     Identifier,
+    Unit
 }
 
 #[derive(Debug, Clone)]

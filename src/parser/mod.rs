@@ -1,10 +1,10 @@
 use crate::diagnostics::Diagnostic;
-use crate::parser::ast::{Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
 use crate::parser::ast::Phase::Comptime;
+use crate::parser::ast::{Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
 use crate::source::SourceFile;
 use crate::tokenizer::{Token, TokenKind};
 
-mod ast;
+pub mod ast;
 
 pub struct Parser<'src, 'tokens> {
     source: &'src SourceFile,
@@ -57,7 +57,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             span: self.source.fromto(comp.span, expression.span),
             data: ItemData::Binding(Binding {
                 name: identifier.span,
-                initializer: expression,
+                expression: expression,
                 type_annotation: None, // TODO
                 mutable: false, // TODO
                 phase: Comptime
@@ -79,13 +79,16 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
             self.expect(TokenKind::LParen, "Expected `)`")?;
             // TODO
-            self.expect(TokenKind::RParen, "Expected `)`")?;
+            let rparen = self.expect(TokenKind::RParen, "Expected `)`")?;
 
             let return_type = if self.peek_is(TokenKind::RArrow) {
                 self.expect(TokenKind::RArrow, "Expected `->`")?;
-                Some(self.parse_type_expression()?)
+                self.parse_type_expression()?
             } else {
-                None
+                TypeExpression {
+                    span: rparen.span,
+                    data: TypeExpressionData::Unit
+                }
             };
 
             let body = self.parse_body()?;
