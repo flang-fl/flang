@@ -134,13 +134,15 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
     fn parse_statement(&mut self) -> Option<Statement> {
         if self.peek_is(TokenKind::Return) {
-            self.expect(TokenKind::Return, "Expected `return`")?;
+            let return_ = self.expect(TokenKind::Return, "Expected `return`")?;
 
             let (expression, span) = if self.peek_is(TokenKind::Semi) {
-                (None, self.expect(TokenKind::Semi, "Expected `;`")?.span)
+                let semi = self.expect(TokenKind::Semi, "Expected `;`")?;
+                (None, self.source.fromto(return_.span, semi.span))
             } else {
                 let expression = self.parse_expression()?;
-                (Some(expression), self.expect(TokenKind::Semi, "Expected `;`")?.span)
+                let semi = self.expect(TokenKind::Semi, "Expected `;`")?;
+                (Some(expression), self.source.fromto(return_.span, semi.span))
             };
 
             return Some(Statement {
