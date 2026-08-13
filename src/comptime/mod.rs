@@ -1,0 +1,208 @@
+use std::collections::HashMap;
+use crate::diagnostics::Diagnostic;
+use crate::parser::ast::{Expression, ExpressionData, Phase};
+use crate::semantic::hir::{HirExpression, HirExpressionData, HirFunctionExpression, HirProgram};
+use crate::semantic::SemanticProgram;
+use crate::semantic::symbols::{SymbolId, SymbolKind, SymbolTable};
+use crate::semantic::types::Type;
+use crate::source::SourceFile;
+
+#[derive(Debug, Clone)]
+pub enum ComptimeValue {
+    I64(i64),
+    Function(FunctionId),
+    Type(Type),
+    Error,
+}
+
+#[derive(Debug)]
+pub struct EvaluatedProgram {
+    pub symbols: SymbolTable,
+    pub values: ValueStore,
+    pub functions: FunctionStore,
+    pub hir: HirProgram
+}
+
+pub struct Evaluator<'src> {
+    source: &'src SourceFile,
+    values: ValueStore,
+    functions: FunctionStore,
+    diagnostics: Vec<Diagnostic>
+}
+
+impl<'src> Evaluator<'src> {
+    pub fn new(
+        source: &'src SourceFile,
+    ) -> Self {
+        Self {
+            source,
+            values: ValueStore { map: HashMap::new() },
+            functions: FunctionStore { functions: Vec::new() },
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn evaluate(mut self, program: SemanticProgram)
+        -> Result<EvaluatedProgram, Vec<Diagnostic>>
+    {
+        let symbols = program.symbols;
+        for (id, value) in symbols.symbols.iter().enumerate() {
+            let id = SymbolId(id as u32);
+
+            match &value.kind {
+                SymbolKind::BuiltinType(type_) => {
+                    self.values.insert(
+                        id,
+                        ComptimeValue::Type(type_.clone())
+                    );
+                }
+
+                _ => {}
+            }
+        }
+
+        for binding in program.hir.bindings.iter() {
+            if binding.phase == Phase::Runtime {
+                continue;
+            }
+
+            let value = self.evaluate_expression(
+                &binding.expression,
+                &symbols,
+            );
+
+            self.values.insert(binding.symbol, value);
+        }
+
+        if self.diagnostics.is_empty() {
+            Ok(EvaluatedProgram {
+                hir: program.hir,
+                values: self.values,
+                symbols,
+                functions: self.functions,
+            })
+        } else {
+            Err(self.diagnostics)
+        }
+    }
+
+    fn evaluate_expression(
+        &mut self,
+        expression: &HirExpression,
+        symbols: &SymbolTable,
+    ) -> ComptimeValue {
+        match &expression.data {
+            HirExpressionData::Function(function) => {
+                let function_id = self.functions.insert(ComptimeFunction {
+                    hir: function.clone()
+                });
+
+                ComptimeValue::Function(function_id)
+            }
+
+            HirExpressionData::Integer(value) =>
+                ComptimeValue::I64(*value),
+
+            HirExpressionData::Symbol(symbol) => {
+                if let Some(value) = self.values.get(*symbol) {
+                    return value.clone();
+                }
+
+                let symbol_info = symbols.get(*symbol);
+
+                let message = match &symbol_info.kind {
+                    SymbolKind::BuiltinType(_) => {
+                        format!(
+                            "internal error: built-in `{}` has no compile-time value",
+                            symbol_info.name,
+                        )
+                    }
+
+                    SymbolKind::Binding {
+                        phase: Phase::Runtime,
+                        ..
+                    } => {
+                        format!(
+                            "runtime binding `{}` is unavailable at compile time",
+                            symbol_info.name,
+                        )
+                    }
+
+                    SymbolKind::Binding {
+                        phase: Phase::Comptime,
+                        ..
+                    } => {
+                        format!(
+                            "compile-time binding `{}` has not been evaluated yet",
+                            symbol_info.name,
+                        )
+                    }
+
+                    SymbolKind::Parameter => {
+                        format!(
+                            "parameter `{}` is unavailable outside a compile-time function call",
+                            symbol_info.name,
+                        )
+                    }
+
+                    SymbolKind::Local => {
+                        format!(
+                            "local binding `{}` is unavailable outside a compile-time function call",
+                            symbol_info.name,
+                        )
+                    }
+                };
+
+                self.diagnostics.push(Diagnostic::error(
+                    "Value unavailable at compile time".to_owned(),
+                    expression.span,
+                    message,
+                ));
+
+                ComptimeValue::Error
+            }
+
+            HirExpressionData::Error => ComptimeValue::Error,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ValueStore {
+    map: HashMap<SymbolId, ComptimeValue>,
+}
+
+impl ValueStore {
+    fn insert(&mut self, symbol: SymbolId, value: ComptimeValue) {
+        self.map.insert(symbol, value);
+    }
+
+    pub fn get(&self, symbol: SymbolId) -> Option<&ComptimeValue> {
+        self.map.get(&symbol)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionId(u32);
+
+#[derive(Debug)]
+pub struct FunctionStore {
+    functions: Vec<ComptimeFunction>,
+}
+
+impl FunctionStore {
+    pub fn insert(&mut self, function: ComptimeFunction) -> FunctionId {
+        let id = FunctionId(self.functions.len() as u32);
+        self.functions.push(function);
+        id
+    }
+
+    pub fn get(&self, id: FunctionId) -> Option<&ComptimeFunction> {
+        self.functions.get(id.0 as usize)
+    }
+}
+
+#[derive(Debug)]
+pub struct ComptimeFunction {
+    pub hir: HirFunctionExpression
+}

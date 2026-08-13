@@ -1,4 +1,5 @@
 use std::{env, fs};
+use crate::comptime::Evaluator;
 use crate::diagnostics::PrintDiagnostics;
 use crate::parser::Parser;
 use crate::semantic::Analyzer;
@@ -10,6 +11,8 @@ pub mod diagnostics;
 pub mod tokenizer;
 mod parser;
 mod semantic;
+mod comptime;
+mod llvm;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -49,7 +52,7 @@ fn main() {
                     println!("{:#?}", program);
                     println!();
 
-                    let mut analyzer = Analyzer::new(&file);
+                    let analyzer = Analyzer::new(&file);
                     let analyzed = analyzer.analyze(
                         program
                     );
@@ -58,8 +61,19 @@ fn main() {
                         Err(diagnostics) => {
                             diagnostics.print_diagnostics(&mut file_manager);
                         }
-                        Ok(hir_program) => {
-                            println!("{:#?}", hir_program);
+                        Ok(semantic_program) => {
+                            println!("{:#?}", semantic_program);
+
+                            let evaluator = Evaluator::new(&file);
+
+                            match evaluator.evaluate(semantic_program) {
+                                Err(diagnostics) => {
+                                    diagnostics.print_diagnostics(&mut file_manager);
+                                }
+                                Ok(evaluated_program) => {
+                                    println!("{evaluated_program:#?}");
+                                }
+                            }
                         }
                     }
                 }

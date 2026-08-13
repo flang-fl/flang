@@ -38,6 +38,7 @@ impl Environment {
     }
 }
 
+#[derive(Debug)]
 pub struct SymbolTable {
     pub symbols: Vec<Symbol>
 }
@@ -63,8 +64,9 @@ impl SymbolTable {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SymbolId(u32);
+pub struct SymbolId(pub u32);
 
+#[derive(Debug)]
 pub struct Symbol {
     pub name: String,
     pub declaration_span: Option<Span>,
@@ -72,6 +74,7 @@ pub struct Symbol {
     pub type_: Type
 }
 
+#[derive(Debug)]
 pub enum SymbolKind {
     BuiltinType(Type),
     Binding {

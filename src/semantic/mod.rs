@@ -5,9 +5,15 @@ use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, Symbol
 use crate::semantic::types::Type;
 use crate::source::{SourceFile, Span};
 
-mod symbols;
-mod types;
-mod hir;
+pub mod symbols;
+pub mod types;
+pub mod hir;
+
+#[derive(Debug)]
+pub struct SemanticProgram {
+    pub hir: HirProgram,
+    pub symbols: SymbolTable,
+}
 
 pub struct Analyzer<'src> {
     source: &'src SourceFile,
@@ -31,7 +37,7 @@ impl<'src> Analyzer<'src> {
         environment.define("i64".to_owned(), i64_id);
 
         let unit_id = symbols.insert(Symbol {
-            name: "Unit".to_owned(),
+            name: "unit".to_owned(),
             kind: SymbolKind::BuiltinType(Type::Unit),
             declaration_span: None,
             type_: Type::Type
@@ -49,9 +55,9 @@ impl<'src> Analyzer<'src> {
     }
 
     pub fn analyze(
-        &mut self,
+        mut self,
         program: Program,
-    ) -> Result<HirProgram, Vec<Diagnostic>> {
+    ) -> Result<SemanticProgram, Vec<Diagnostic>> {
         let mut collected_bindings = Vec::new();
         for item in program.items.iter() {
             let Item { span: item_span, data } = item;
@@ -103,8 +109,11 @@ impl<'src> Analyzer<'src> {
         }
 
         if self.diagnostics.is_empty() {
-            Ok(HirProgram {
-                bindings: hir_bindings
+            Ok(SemanticProgram {
+                hir: HirProgram {
+                    bindings: hir_bindings
+                },
+                symbols: self.symbols,
             })
         } else {
             Err(self.diagnostics.clone())
