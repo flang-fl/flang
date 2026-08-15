@@ -1,6 +1,5 @@
-use std::fmt::{Debug, Display};
-use std::ops::AddAssign;
 use ariadne::Source;
+use std::fmt::{Debug, Display};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SourceId(pub usize);

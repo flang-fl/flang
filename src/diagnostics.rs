@@ -1,6 +1,6 @@
-use ariadne::{Color, Report, ReportKind};
+use crate::source::{SourceFileManager, Span};
 use ariadne::Label as AriadneLabel;
-use crate::source::{SourceFile, SourceFileManager, Span};
+use ariadne::{Color, Report, ReportKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {

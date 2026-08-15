@@ -114,3 +114,131 @@ fn compile(
 
     Ok(llvm)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compile_text(
+        text: &str,
+    ) -> Result<String, Vec<Diagnostic>> {
+        let mut sources = SourceFileManager::new();
+
+        let id = sources.add_file(
+            "<test>".to_owned(),
+            text.to_owned(),
+        );
+
+        compile(sources.get_file(id))
+    }
+
+    fn assert_compile_error(source: &str, expected: &str) {
+        let diagnostics =
+            compile_text(source).expect_err("expected compilation to fail");
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.message.contains(expected)
+                    || diagnostic.primary.text.contains(expected)
+            }),
+            "expected an error containing {expected:?}, got:\n{diagnostics:#?}",
+        );
+    }
+
+    #[test]
+    fn compiles_integer_main_to_llvm() {
+        let llvm = compile_text(
+            r#"
+            comp main = fn() -> i64 {
+                return 6;
+            };
+            "#,
+        ).expect("program should compile");
+
+        assert!(
+            llvm.contains("define i64 @flang_main()"),
+            "generated LLVM:\n{llvm}"
+        );
+
+        assert!(
+            llvm.contains("ret i64 6"),
+            "generated LLVM:\n{llvm}"
+        );
+
+        assert!(
+            llvm.contains("define i32 @main()"),
+            "generated LLVM:\n{llvm}"
+        )
+    }
+
+    #[test]
+    fn rejects_empty_return_from_i64_function() {
+        assert_compile_error(
+            r#"
+            comp main = fn() -> i64 {
+                return;
+            };
+            "#,
+            "Return without value"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_return_type() {
+        assert_compile_error(
+            r#"
+            comp main = fn() -> mystery {
+                return 6;
+            };
+            "#,
+            "Unknown Type",
+        );
+    }
+
+    #[test]
+    fn binding_requires_trailing_semicolon() {
+        assert_compile_error(
+            r#"
+            comp main = fn() -> i64 {
+                return 6;
+            }
+            "#,
+            "expected `;` after binding"
+        );
+    }
+
+    #[test]
+    fn builds_and_runs_native_executable() {
+        let llvm = compile_text(
+            r#"
+            comp main = fn() -> i64 {
+                return 6;
+            };
+            "#
+        ).expect("program should compile");
+
+        let directory = tempfile::tempdir()
+            .expect("temporary directory should be created");
+
+        let ir_path = directory.path().join("main.ll");
+
+        let executable = if env::consts::EXE_EXTENSION.is_empty() {
+            directory.path().join("main")
+        } else {
+            directory.path().join("main.exe")
+        };
+
+        toolchain::build_executable(
+            &llvm,
+            &ir_path,
+            &executable,
+        )
+            .expect("Clang should build the executable");
+
+        let status = std::process::Command::new(&executable)
+            .status()
+            .expect("executable should run");
+
+        assert_eq!(status.code(), Some(6));
+    }
+}
