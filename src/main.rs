@@ -1,19 +1,19 @@
-use std::{env, fs};
-use std::path::Path;
 use crate::comptime::Evaluator;
 use crate::diagnostics::{Diagnostic, PrintDiagnostics};
 use crate::parser::Parser;
 use crate::semantic::Analyzer;
 use crate::source::{SourceFile, SourceFileManager};
 use crate::tokenizer::Tokenizer;
+use std::path::Path;
+use std::{env, fs};
 
-pub mod source;
+mod comptime;
 pub mod diagnostics;
-pub mod tokenizer;
+mod llvm;
 mod parser;
 mod semantic;
-mod comptime;
-mod llvm;
+pub mod source;
+pub mod tokenizer;
 mod toolchain;
 
 fn main() {
@@ -25,7 +25,10 @@ fn main() {
     };
 
     let mut file_manager = SourceFileManager::new();
-    file_manager.add_file(file.clone(), fs::read_to_string(&file).expect("Failed to read file"));
+    file_manager.add_file(
+        file.clone(),
+        fs::read_to_string(&file).expect("Failed to read file"),
+    );
 
     let [file] = file_manager.files() else {
         panic!("More than one file not currently supported");
@@ -38,10 +41,7 @@ fn main() {
         Ok(llvm) => {
             let source_path = Path::new(&file.name);
 
-            let build_dir = source_path
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("build");
+            let build_dir = source_path.parent().unwrap_or(Path::new(".")).join("build");
 
             let stem = source_path
                 .file_stem()
@@ -57,16 +57,9 @@ fn main() {
                 artifact_base.with_extension(env::consts::EXE_EXTENSION)
             };
 
-            match toolchain::build_executable(
-                &llvm,
-                &ir_path,
-                &executable_path,
-            ) {
+            match toolchain::build_executable(&llvm, &ir_path, &executable_path) {
                 Ok(()) => {
-                    println!(
-                        "built {}",
-                        executable_path.display()
-                    );
+                    println!("built {}", executable_path.display());
                 }
 
                 Err(error) => {
@@ -77,10 +70,7 @@ fn main() {
     }
 }
 
-fn compile(
-    source: &SourceFile,
-) -> Result<String, Vec<Diagnostic>>
-{
+fn compile(source: &SourceFile) -> Result<String, Vec<Diagnostic>> {
     let tokenizer = Tokenizer::new(&source);
     let tokens = tokenizer.tokenize()?;
     println!("=== Tokens");
@@ -119,29 +109,48 @@ fn compile(
 mod tests {
     use super::*;
 
-    fn compile_text(
-        text: &str,
-    ) -> Result<String, Vec<Diagnostic>> {
+    fn compile_text(text: &str) -> Result<String, Vec<Diagnostic>> {
         let mut sources = SourceFileManager::new();
 
-        let id = sources.add_file(
-            "<test>".to_owned(),
-            text.to_owned(),
-        );
+        let id = sources.add_file("<test>".to_owned(), text.to_owned());
 
         compile(sources.get_file(id))
     }
 
     fn assert_compile_error(source: &str, expected: &str) {
-        let diagnostics =
-            compile_text(source).expect_err("expected compilation to fail");
+        let diagnostics = compile_text(source).expect_err("expected compilation to fail");
 
         assert!(
             diagnostics.iter().any(|diagnostic| {
-                diagnostic.message.contains(expected)
-                    || diagnostic.primary.text.contains(expected)
+                diagnostic.message.contains(expected) || diagnostic.primary.text.contains(expected)
             }),
             "expected an error containing {expected:?}, got:\n{diagnostics:#?}",
+        );
+    }
+
+    fn assert_return_value(source: &str, expected: i32) {
+        let llvm = compile_text(source).expect("program should compile");
+
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+
+        let ir_path = directory.path().join("main.ll");
+
+        let executable = if env::consts::EXE_EXTENSION.is_empty() {
+            directory.path().join("main")
+        } else {
+            directory.path().join("main.exe")
+        };
+
+        toolchain::build_executable(&llvm, &ir_path, &executable)
+            .expect("Clang should build the executable");
+
+        let status = std::process::Command::new(&executable)
+            .status()
+            .expect("executable should run");
+
+        assert_eq!(
+            status.code().expect("program should have return value"),
+            expected
         );
     }
 
@@ -153,17 +162,15 @@ mod tests {
                 return 6;
             };
             "#,
-        ).expect("program should compile");
+        )
+        .expect("program should compile");
 
         assert!(
             llvm.contains("define i64 @flang_main()"),
             "generated LLVM:\n{llvm}"
         );
 
-        assert!(
-            llvm.contains("ret i64 6"),
-            "generated LLVM:\n{llvm}"
-        );
+        assert!(llvm.contains("ret i64 6"), "generated LLVM:\n{llvm}");
 
         assert!(
             llvm.contains("define i32 @main()"),
@@ -179,7 +186,7 @@ mod tests {
                 return;
             };
             "#,
-            "Return without value"
+            "Return without value",
         );
     }
 
@@ -203,42 +210,97 @@ mod tests {
                 return 6;
             }
             "#,
-            "expected `;` after binding"
+            "expected `;` after binding",
         );
     }
 
     #[test]
     fn builds_and_runs_native_executable() {
-        let llvm = compile_text(
+        assert_return_value(
             r#"
             comp main = fn() -> i64 {
                 return 6;
             };
-            "#
-        ).expect("program should compile");
+            "#,
+            6,
+        );
+    }
 
-        let directory = tempfile::tempdir()
-            .expect("temporary directory should be created");
+    #[test]
+    fn simple_addition_and_comptime_variable() {
+        assert_return_value(
+            r#"
+            comp answer = 40;
 
-        let ir_path = directory.path().join("main.ll");
+            comp main = fn() -> i64 {
+                return answer + 2;
+            };
+            "#,
+            40 + 2
+        );
+    }
 
-        let executable = if env::consts::EXE_EXTENSION.is_empty() {
-            directory.path().join("main")
-        } else {
-            directory.path().join("main.exe")
-        };
+    #[test]
+    fn multiplicative_precedence() {
+        assert_return_value(
+            r#"
+            comp main = fn() -> i64 {
+                return 2 + 3 * 4;
+            };
+            "#,
+            2 + 3 * 4
+        );
+    }
 
-        toolchain::build_executable(
-            &llvm,
-            &ir_path,
-            &executable,
-        )
-            .expect("Clang should build the executable");
+    #[test]
+    fn left_associative() {
+        assert_return_value(
+            r#"
+            comp main = fn() -> i64 {
+                return 8 - 3 - 1;
+            };
+            "#,
+            8 - 3 - 1
+        );
+    }
 
-        let status = std::process::Command::new(&executable)
-            .status()
-            .expect("executable should run");
+    #[test]
+    fn all_llvm_arithmetic() {
+        assert_return_value(
+            r#"
+            comp main = fn() -> i64 {
+                return 1 + 2 * 3 - 4 / 5;
+            };
+            "#,
+            1 + 2 * 3 - 4 / 5
+        );
+    }
 
-        assert_eq!(status.code(), Some(6));
+    #[test]
+    fn comptime_division_by_zero() {
+        assert_compile_error(
+            r#"
+            comp test = 5 / 0;
+
+            comp main = fn() -> i64 {
+                return test;
+            };
+            "#,
+            "Division by zero",
+        );
+    }
+
+    #[test]
+    fn comptime_overflow() {
+        assert_compile_error(
+            r#"
+            comp overflowed = 9223372036854775806 + 2;
+
+            comp main = fn() -> i64 {
+                return overflowed;
+            };
+            "#,
+            "overflow",
+        );
     }
 }

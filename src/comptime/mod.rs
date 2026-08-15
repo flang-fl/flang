@@ -154,7 +154,7 @@ impl Evaluator {
                             BinaryOperator::Divide => {
                                 if rhs == 0 {
                                     self.diagnostics.push(Diagnostic::error(
-                                        "Division by 0",
+                                        "Division by zero",
                                         expression.span,
                                         "really?"
                                     ));
