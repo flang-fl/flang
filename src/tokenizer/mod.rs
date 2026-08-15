@@ -117,6 +117,8 @@ impl<'src> Tokenizer<'src> {
             '{' => TokenKind::LCurly,
             '}' => TokenKind::RCurly,
             ';' => TokenKind::Semi,
+            ',' => TokenKind::Comma,
+            ':' => TokenKind::Colon,
 
             '+' => TokenKind::Plus,
             '-' => {
@@ -191,6 +193,8 @@ pub enum TokenKind {
     Star,
     Minus,
     Slash,
+    Comma,
+    Colon,
     RArrow,
     LCurly,
     RCurly,

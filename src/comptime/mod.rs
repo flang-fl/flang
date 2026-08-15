@@ -1,16 +1,18 @@
+use std::cmp::PartialEq;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::{BinaryOperator, Phase};
 use crate::semantic::SemanticProgram;
-use crate::semantic::hir::{HirExpression, HirExpressionData, HirFunctionExpression, HirProgram};
+use crate::semantic::hir::{HirExpression, HirExpressionData, HirFunctionExpression, HirProgram, HirStatementData};
 use crate::semantic::symbols::{SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeValue {
     I64(i64),
     Function(FunctionId),
     Type(Type),
+    Unit,
     Error,
 }
 
@@ -25,6 +27,7 @@ pub struct EvaluatedProgram {
 pub struct Evaluator {
     values: ValueStore,
     functions: FunctionStore,
+    frames: Vec<HashMap<SymbolId, ComptimeValue>>,
     diagnostics: Vec<Diagnostic>
 }
 
@@ -33,8 +36,20 @@ impl Evaluator {
         Self {
             values: ValueStore { map: HashMap::new() },
             functions: FunctionStore { functions: Vec::new() },
+            frames: Vec::new(),
             diagnostics: Vec::new(),
         }
+    }
+
+    fn lookup_value(
+        &self,
+        symbol: SymbolId,
+    ) -> Option<&ComptimeValue> {
+        self.frames
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(&symbol))
+            .or_else(|| self.values.get(symbol))
     }
 
     pub fn evaluate(mut self, program: SemanticProgram)
@@ -185,8 +200,61 @@ impl Evaluator {
                 }
             }
 
+            HirExpressionData::Call {
+                callee,
+                arguments,
+            } => {
+                let callee_value = self.evaluate_expression(callee, symbols);
+
+                let ComptimeValue::Function(function_id) = callee_value else {
+                    // Semantic analysis should prevent this from occuring
+                    return ComptimeValue::Error;
+                };
+
+                let argument_values = arguments
+                    .iter()
+                    .map(|argument| {
+                        self.evaluate_expression(argument, symbols)
+                    })
+                    .collect::<Vec<_>>();
+
+                if argument_values.iter()
+                    .any(|argument| *argument == ComptimeValue::Error)
+                {
+                    return ComptimeValue::Error;
+                }
+
+                let function = match self.functions.get(function_id) {
+                    Some(function) => function.hir.clone(),
+                    None => {
+                        panic!("Test Explode");
+                        return ComptimeValue::Error;
+                    }
+                };
+
+                let frame = function
+                    .parameters
+                    .iter()
+                    .zip(argument_values)
+                    .map(|(parameter, argument)| {
+                        (parameter.symbol, argument)
+                    })
+                    .collect::<HashMap<_, _>>();
+
+                self.frames.push(frame);
+
+                let result = self.evaluate_function_body(
+                    &function,
+                    symbols,
+                );
+
+                self.frames.pop();
+
+                result
+            }
+
             HirExpressionData::Symbol(symbol) => {
-                if let Some(value) = self.values.get(*symbol) {
+                if let Some(value) = self.lookup_value(*symbol).cloned() {
                     return value.clone();
                 }
 
@@ -245,6 +313,32 @@ impl Evaluator {
             }
 
             HirExpressionData::Error => ComptimeValue::Error,
+        }
+    }
+    
+    fn evaluate_function_body(
+        &mut self,
+        function: &HirFunctionExpression,
+        symbols: &SymbolTable,
+    ) -> ComptimeValue {
+        let Some(statement) = function.body.statements.first() else {
+            self.diagnostics.push(Diagnostic::error(
+                "Function is missing a return statement",
+                function.body.span,
+                ":("
+            ));
+            
+            return ComptimeValue::Error;
+        };
+        
+        match &statement.data {
+            HirStatementData::Return(Some(expression)) => {
+                self.evaluate_expression(expression, symbols)
+            }
+            
+            HirStatementData::Return(None) => {
+                ComptimeValue::Unit
+            }
         }
     }
 }

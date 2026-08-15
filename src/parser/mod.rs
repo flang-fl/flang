@@ -1,7 +1,7 @@
 use std::cmp::min;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::parser::ast::{BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Parameter, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
 use crate::source::SourceFile;
 use crate::tokenizer::{Token, TokenKind};
 
@@ -79,7 +79,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         &mut self,
         minimum_precedence: u8,
     ) -> Option<Expression> {
-        let mut lhs = self.parse_primary()?;
+        let mut lhs = self.parse_postfix_expression()?;
 
         loop {
             let Some((operator, precedence)) =
@@ -108,6 +108,47 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         }
 
         Some(lhs)
+    }
+
+    fn parse_postfix_expression(&mut self) -> Option<Expression> {
+        let mut expression = self.parse_primary()?;
+
+        while self.peek_is(TokenKind::LParen) {
+            expression = self.parse_call_expression(expression)?;
+        }
+
+        Some(expression)
+    }
+
+    fn parse_call_expression(&mut self, callee: Expression) -> Option<Expression> {
+        self.expect(TokenKind::LParen, "Expected `(`")?;
+
+        let mut arguments = Vec::new();
+
+        while !self.peek_is(TokenKind::RParen) {
+            arguments.push(self.parse_expression()?);
+
+            if self.peek_is(TokenKind::Comma) {
+                self.consume();
+            } else {
+                break;
+            }
+        }
+
+        let rparen = self.expect(
+            TokenKind::RParen,
+            "Expected `)` after call arguments"
+        )?;
+
+        let span = self.source.fromto(callee.span, rparen.span);
+
+        Some(Expression {
+            span,
+            data: ExpressionData::Call {
+                callee: Box::new(callee),
+                arguments,
+            }
+        })
     }
 
     fn peek_binary_operator(&self) -> Option<(BinaryOperator, u8)> {
@@ -153,7 +194,26 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
 
         self.expect(TokenKind::LParen, "Expected `)`")?;
-        // TODO
+
+        let mut parameters = Vec::new();
+        while !self.peek_is(TokenKind::RParen) {
+            let identifier = self.expect(TokenKind::Identifier, "Expected identifier of function parameters")?;
+            self.expect(TokenKind::Colon, "Expected `:`")?;
+            let type_ = self.parse_type_expression()?;
+
+            parameters.push(Parameter {
+                span: self.source.fromto(identifier.span, type_.span),
+                name: identifier.span,
+                type_annotation: type_,
+            });
+
+            if self.peek_is(TokenKind::Comma) {
+                self.expect(TokenKind::Comma, "Expected `,`")?;
+            } else {
+                break;
+            }
+        }
+
         let rparen = self.expect(TokenKind::RParen, "Expected `)`")?;
 
         let return_type = if self.peek_is(TokenKind::RArrow) {
@@ -171,7 +231,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let end_span = body.span;
 
         let data = ExpressionData::Function(FunctionExpression {
-            parameters: Vec::new(), // TODO,
+            parameters,
             return_type,
             body,
         });

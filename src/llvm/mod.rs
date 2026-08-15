@@ -80,6 +80,16 @@ impl<'program> FunctionEmitter<'program> {
                 panic!("This should have been caught before LLVM generation");
             }
 
+            HirExpressionData::Call {
+                ..
+            } => {
+                Err(Diagnostic::error(
+                    "TODO: Runtime function calls are currently not supported",
+                    expression.span,
+                    ":("
+                ))
+            }
+
             HirExpressionData::Function(_) => {
                 todo!("Diagnostic: functions arent i64s smh");
             }
@@ -172,8 +182,12 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
     }
 
     let mut emitter = FunctionEmitter::new(program);
-    let Ok(body) = emitter.emit_i64_body(&main_fn) else {
-        todo!("explosion");
+
+    let emitted = emitter.emit_i64_body(&main_fn);
+    let Ok(body) = emitted else {
+        let Err(diagnostic) = emitted else { unreachable!() };
+
+        return Err(vec![diagnostic]);
     };
 
     llvm.push_str("define i64 @flang_main() {\n");

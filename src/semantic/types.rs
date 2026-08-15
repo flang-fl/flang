@@ -3,6 +3,7 @@ pub enum Type {
     I64,
     Unit,
     Function {
+        parameters: Vec<Type>,
         return_type: Box<Type>,
     },
     Error,

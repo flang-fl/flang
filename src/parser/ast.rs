@@ -46,6 +46,10 @@ pub enum ExpressionData {
         lhs: Box<Expression>,
         operator: BinaryOperator,
         rhs: Box<Expression>,
+    },
+    Call {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
     }
 }
 

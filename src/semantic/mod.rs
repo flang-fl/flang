@@ -1,6 +1,7 @@
-use crate::diagnostics::Diagnostic;
+use std::collections::{HashMap, HashSet};
+use crate::diagnostics::{Diagnostic, Label};
 use crate::parser::ast::{Binding, Block, Expression, ExpressionData, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
-use crate::semantic::hir::{HirBinding, HirBlock, HirExpression, HirExpressionData, HirFunctionExpression, HirProgram, HirStatement, HirStatementData};
+use crate::semantic::hir::{HirBinding, HirBlock, HirExpression, HirExpressionData, HirFunctionExpression, HirParameter, HirProgram, HirStatement, HirStatementData};
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
 use crate::source::{SourceFile, Span};
@@ -67,9 +68,9 @@ impl<'src> Analyzer<'src> {
 
                     if let Some(_) = self.environment.lookup(name) {
                         self.diagnostics.push(Diagnostic::error(
-                            "Duplicate binding found".to_owned(),
+                            "Duplicate binding found",
                             *item_span,
-                            "Evil :(".to_owned(),
+                            "Evil :(",
                         ));
 
                         continue;
@@ -214,20 +215,158 @@ impl<'src> Analyzer<'src> {
                 }
             }
 
+            ExpressionData::Call {
+                callee,
+                arguments,
+            } => {
+                let callee = self.analyze_expression(callee, None);
+                if callee.type_ == Type::Error {
+                    return HirExpression::error(expression.span);
+                }
+
+                let (parameter_types, return_type) = match &callee.type_ {
+                    Type::Function {
+                        parameters,
+                        return_type,
+                    } => {
+                        (parameters.clone(), return_type.as_ref().clone())
+                    }
+
+                    actual_type => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Expression is not callable",
+                            callee.span,
+                            format!(
+                                "expected a function, found `{:?}`",
+                                actual_type
+                            ),
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                };
+
+                if arguments.len() != parameter_types.len() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Incorrect number of arguments",
+                        expression.span,
+                        format!(
+                            "expected {} arguments, found {}",
+                            parameter_types.len(),
+                            arguments.len()
+                        )
+                    ));
+
+                    return HirExpression::error(expression.span);
+                }
+
+                let hir_arguments = arguments
+                    .iter()
+                    .zip(parameter_types.iter())
+                    .map(|(argument, parameter_type)| {
+                        self.analyze_expression(
+                            argument,
+                            Some(parameter_type)
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                if hir_arguments.iter().any(|argument| {
+                    argument.type_ == Type::Error
+                }) {
+                    return HirExpression::error(expression.span);
+                }
+
+                if let Some(expected_type) = expected {
+                    if *expected_type != Type::Error
+                        && *expected_type != return_type
+                    {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Call result has the wrong type",
+                            expression.span,
+                            format!(
+                                "Expected `{:?}`, found `{:?}`",
+                                expected_type,
+                                return_type
+                            )
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                }
+
+                HirExpression {
+                    span: expression.span,
+                    type_: return_type,
+                    data: HirExpressionData::Call {
+                        callee: Box::new(callee),
+                        arguments: hir_arguments,
+                    }
+                }
+            },
+
             ExpressionData::Function(function) => {
                 let return_type = self.resolve_type_expression(&function.return_type);
+
+                let parameter_types =
+                function.parameters.iter().map(|parameter| {
+                    self.resolve_type_expression(&parameter.type_annotation)
+                }).collect::<Vec<_>>();
+
+                self.environment.push_scope();
+
+                let mut hir_parameters = Vec::new();
+                let mut names = HashMap::new();
+
+                for (parameter, parameter_type) in
+                    function.parameters.iter().zip(parameter_types.iter())
+                {
+                    let name = self.source.span_text(parameter.name)
+                        .to_owned();
+
+                    if let Some(old) = names.insert(name.clone(), parameter.name) {
+                        self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                            "Duplicate parameter name",
+                            parameter.name,
+                            "duplicate",
+                            vec![Label {
+                                span: old,
+                                text: "already defined here".to_owned()
+                            }]
+                        ));
+                    }
+
+                    let symbol_id = self.symbols.insert(Symbol {
+                        name: name.clone(),
+                        declaration_span: Some(parameter.name),
+                        kind: SymbolKind::Parameter,
+                        type_: parameter_type.clone(),
+                    });
+
+                    self.environment.define(name.clone(), symbol_id);
+
+                    hir_parameters.push(HirParameter {
+                        symbol: symbol_id,
+                        name: parameter.name,
+                        type_: parameter_type.clone(),
+                        span: parameter.span,
+                    });
+                }
 
                 let body = self.analyze_block(
                     &function.body,
                     &return_type
                 );
 
+                self.environment.pop_scope();
+
                 let function_type = Type::Function {
+                    parameters: parameter_types,
                     return_type: Box::new(return_type.clone()),
                 };
 
                 let hir_function = HirFunctionExpression {
-                    parameters: Vec::new(), // TODO function parameters
+                    parameters: hir_parameters,
                     return_type,
                     body,
                 };

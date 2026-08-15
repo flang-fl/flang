@@ -55,6 +55,10 @@ pub enum HirExpressionData {
         operator: BinaryOperator,
         rhs: Box<HirExpression>,
     },
+    Call {
+        callee: Box<HirExpression>,
+        arguments: Vec<HirExpression>,
+    },
     Error,
 }
 
@@ -67,6 +71,7 @@ pub struct HirFunctionExpression {
 
 #[derive(Debug, Clone)]
 pub struct HirParameter {
+    pub symbol: SymbolId,
     pub name: Span,
     pub type_: Type,
     pub span: Span,

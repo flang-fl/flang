@@ -71,6 +71,15 @@ impl Diagnostic {
         Self::new(Severity::Error, message.into(), Label::new(span, text.into()), vec![])
     }
 
+    pub fn error_with_extra_labels(
+        message: impl Into<String>,
+        span: Span,
+        text: impl Into<String>,
+        extra_labels: Vec<Label>,
+    ) -> Self {
+        Self::new(Severity::Error, message.into(), Label::new(span, text.into()), extra_labels)
+    }
+
     pub fn warning(
         message: String,
         span: Span,
