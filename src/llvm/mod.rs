@@ -1,10 +1,116 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue, EvaluatedProgram};
 use crate::diagnostics::Diagnostic;
-use crate::parser::ast::Phase;
+use crate::parser::ast::{BinaryOperator, Phase, Program};
 use crate::semantic::hir::{HirExpression, HirExpressionData, HirStatementData};
 use crate::semantic::symbols::SymbolKind;
 use crate::semantic::types::Type;
 use crate::source::{SourceId, Span};
+
+struct FunctionEmitter<'program> {
+    program: &'program EvaluatedProgram,
+    instructions: String,
+    next_temporary: usize,
+}
+
+impl<'program> FunctionEmitter<'program> {
+    fn new(program: &'program EvaluatedProgram) -> Self {
+        Self {
+            program,
+            instructions: String::new(),
+            next_temporary: 0,
+        }
+    }
+
+    fn fresh_temporary(&mut self) -> String {
+        let temporary = format!("%tmp{}", self.next_temporary);
+        self.next_temporary += 1;
+        temporary
+    }
+
+    fn emit_i64_expression(
+        &mut self,
+        expression: &HirExpression,
+    ) -> Result<String, Diagnostic> {
+        match &expression.data {
+            HirExpressionData::Integer(value) => {
+                Ok(value.to_string())
+            }
+
+            HirExpressionData::Symbol(symbol_id) => {
+                match self.program.values.get(*symbol_id) {
+                    Some(ComptimeValue::I64(value)) => {
+                        Ok(value.to_string())
+                    }
+
+                    Some(_) => {
+                        todo!("Diagnostic: symbol isn't an i64 constant");
+                    }
+
+                    None => {
+                        todo!("Eventually this may be a runtime variable or parameter");
+                    }
+                }
+            }
+
+            HirExpressionData::Binary {
+                lhs,
+                operator,
+                rhs,
+            } => {
+                let lhs = self.emit_i64_expression(lhs)?;
+                let rhs = self.emit_i64_expression(rhs)?;
+
+                let opcode = match operator {
+                    BinaryOperator::Add => "add",
+                    BinaryOperator::Subtract => "sub",
+                    BinaryOperator::Multiply => "mul",
+                    BinaryOperator::Divide => "sdiv",
+                };
+
+                let result = self.fresh_temporary();
+
+                self.instructions.push_str(&format!(
+                    "  {result} = {opcode} i64 {lhs}, {rhs}\n"
+                ));
+
+                Ok(result)
+            }
+
+            HirExpressionData::Error => {
+                panic!("This should have been caught before LLVM generation");
+            }
+
+            HirExpressionData::Function(_) => {
+                todo!("Diagnostic: functions arent i64s smh");
+            }
+        }
+    }
+
+    fn emit_i64_body(
+        &mut self,
+        function: &ComptimeFunction,
+    ) -> Result<String, Diagnostic> {
+        let [statement] = function.hir.body.statements.as_slice() else {
+            todo!("For now: Requires exactly one statement in main");
+        };
+
+        match &statement.data {
+            HirStatementData::Return(Some(expression)) => {
+                let operand = self.emit_i64_expression(expression)?;
+
+                self.instructions.push_str(
+                    &format!("  ret i64 {operand}\n")
+                );
+            }
+
+            HirStatementData::Return(None) => {
+                todo!("No empty returns in main")
+            }
+        }
+
+        Ok(self.instructions.clone())
+    }
+}
 
 pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
     let symbols = &program.symbols;
@@ -65,7 +171,8 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
         todo!("`main` must have no parameters");
     }
 
-    let Ok(body) = emit_i64_body(&main_fn, program) else {
+    let mut emitter = FunctionEmitter::new(program);
+    let Ok(body) = emitter.emit_i64_body(&main_fn) else {
         todo!("explosion");
     };
 
@@ -84,59 +191,4 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
     );
 
     Ok(llvm)
-}
-
-fn emit_i64_body(
-    function: &ComptimeFunction,
-    program: &EvaluatedProgram,
-) -> Result<String, Diagnostic> {
-    let [statement] = function.hir.body.statements.as_slice() else {
-        todo!("For now: Requires exactly one statement in main");
-    };
-
-    match &statement.data {
-        HirStatementData::Return(Some(expression)) => {
-            let operand = emit_i64_expression(expression, program)?;
-            Ok(format!("  ret i64 {operand}\n"))
-        }
-
-        HirStatementData::Return(None) => {
-            todo!("No empty returns in main")
-        }
-    }
-}
-
-fn emit_i64_expression(
-    expression: &HirExpression,
-    program: &EvaluatedProgram,
-) -> Result<String, Diagnostic> {
-    match &expression.data {
-        HirExpressionData::Integer(value) => {
-            Ok(value.to_string())
-        }
-
-        HirExpressionData::Symbol(symbol_id) => {
-            match program.values.get(*symbol_id) {
-                Some(ComptimeValue::I64(value)) => {
-                    Ok(value.to_string())
-                }
-
-                Some(_) => {
-                    todo!("Diagnostic: symbol isn't an i64 constant");
-                }
-
-                None => {
-                    todo!("Eventually this may be a runtime variable or parameter");
-                }
-            }
-        }
-
-        HirExpressionData::Error => {
-            panic!("This should have been caught before LLVM generation");
-        }
-
-        HirExpressionData::Function(_) => {
-            todo!("Diagnostic: functions arent i64s smh");
-        }
-    }
 }

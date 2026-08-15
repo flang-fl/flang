@@ -118,8 +118,8 @@ impl<'src> Tokenizer<'src> {
             '}' => TokenKind::RCurly,
             ';' => TokenKind::Semi,
 
+            '+' => TokenKind::Plus,
             '-' => {
-                // in the future single-token support
                 if self.peek_offset(1) == Some('>') {
                     let start = self.index;
                     self.next();
@@ -132,8 +132,10 @@ impl<'src> Tokenizer<'src> {
                     });
                 }
 
-                todo!()
+                TokenKind::Minus
             }
+            '*' => TokenKind::Star,
+            '/' => TokenKind::Slash,
 
             _ => return None,
         };
@@ -185,6 +187,10 @@ pub enum TokenKind {
     // Symbols
     Eq,
     Semi,
+    Plus,
+    Star,
+    Minus,
+    Slash,
     RArrow,
     LCurly,
     RCurly,

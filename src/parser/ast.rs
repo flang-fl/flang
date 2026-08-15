@@ -42,6 +42,19 @@ pub enum ExpressionData {
     Function(FunctionExpression),
     IntegerLiteral,
     Name,
+    Binary {
+        lhs: Box<Expression>,
+        operator: BinaryOperator,
+        rhs: Box<Expression>,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
 }
 
 #[derive(Debug, Clone)]

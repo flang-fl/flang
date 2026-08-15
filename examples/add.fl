@@ -1,0 +1,5 @@
+comp answer = 32 + 4 + 2 + 1 + 1;
+
+comp main = fn() -> i64 {
+    return answer + 2;
+};

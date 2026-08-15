@@ -1,5 +1,5 @@
 use crate::diagnostics::Diagnostic;
-use crate::parser::ast::Phase;
+use crate::parser::ast::{BinaryOperator, Phase};
 use crate::semantic::SemanticProgram;
 use crate::semantic::hir::{HirExpression, HirExpressionData, HirFunctionExpression, HirProgram};
 use crate::semantic::symbols::{SymbolId, SymbolKind, SymbolTable};
@@ -97,6 +97,93 @@ impl Evaluator {
 
             HirExpressionData::Integer(value) =>
                 ComptimeValue::I64(*value),
+
+            HirExpressionData::Binary {
+                lhs,
+                operator,
+                rhs
+            } => {
+                let lhs = self.evaluate_expression(lhs, symbols);
+                let rhs = self.evaluate_expression(rhs, symbols);
+
+                match (lhs, rhs) {
+                    (ComptimeValue::I64(lhs), ComptimeValue::I64(rhs)) => {
+                        match *operator {
+                            BinaryOperator::Add => {
+                                let result = lhs.checked_add(rhs);
+                                match result {
+                                    Some(result) => ComptimeValue::I64(result),
+                                    None => {
+                                        self.diagnostics.push(Diagnostic::error(
+                                            "Integer Overflow",
+                                            expression.span,
+                                            "this overflows :("
+                                        ));
+                                        ComptimeValue::Error
+                                    },
+                                }
+                            },
+                            BinaryOperator::Subtract => {
+                                let result = lhs.checked_sub(rhs);
+                                match result {
+                                    Some(result) => ComptimeValue::I64(result),
+                                    None => {
+                                        self.diagnostics.push(Diagnostic::error(
+                                            "Integer Overflow",
+                                            expression.span,
+                                            "this overflows :("
+                                        ));
+                                        ComptimeValue::Error
+                                    }
+                                }
+                            },
+                            BinaryOperator::Multiply => {
+                                let result = lhs.checked_mul(rhs);
+                                match result {
+                                    Some(result) => ComptimeValue::I64(result),
+                                    None => {
+                                        self.diagnostics.push(Diagnostic::error(
+                                            "Integer Overflow",
+                                            expression.span,
+                                            "this overflows :("
+                                        ));
+                                        ComptimeValue::Error
+                                    }
+                                }
+                            },
+                            BinaryOperator::Divide => {
+                                if rhs == 0 {
+                                    self.diagnostics.push(Diagnostic::error(
+                                        "Division by 0",
+                                        expression.span,
+                                        "really?"
+                                    ));
+                                    return ComptimeValue::Error;
+                                }
+                                let result = lhs.checked_div(rhs);
+                                match result {
+                                    Some(result) => ComptimeValue::I64(result),
+                                    None => {
+                                        self.diagnostics.push(Diagnostic::error(
+                                            "Integer Overflow",
+                                            expression.span,
+                                            "this overflows :("
+                                        ));
+                                        ComptimeValue::Error
+                                    }
+                                }
+                            },
+                        }
+                    }
+
+                    (ComptimeValue::Error, _) | (_, ComptimeValue::Error) => ComptimeValue::Error,
+
+                    _ => {
+                        // Type invariant was violated
+                        ComptimeValue::Error
+                    }
+                }
+            }
 
             HirExpressionData::Symbol(symbol) => {
                 if let Some(value) = self.values.get(*symbol) {

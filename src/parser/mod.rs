@@ -1,6 +1,7 @@
+use std::cmp::min;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::parser::ast::{BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
 use crate::source::SourceFile;
 use crate::tokenizer::{Token, TokenKind};
 
@@ -71,6 +72,60 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_expression(&mut self) -> Option<Expression> {
+        self.parse_binary_expression(0)
+    }
+
+    fn parse_binary_expression(
+        &mut self,
+        minimum_precedence: u8,
+    ) -> Option<Expression> {
+        let mut lhs = self.parse_primary()?;
+
+        loop {
+            let Some((operator, precedence)) =
+              self.peek_binary_operator()
+            else {
+                break;
+            };
+
+            if precedence < minimum_precedence {
+                break;
+            }
+
+            self.consume();
+
+            let rhs = self.parse_binary_expression(precedence + 1)?;
+            let span = self.source.fromto(lhs.span, rhs.span);
+
+            lhs = Expression {
+                span,
+                data: ExpressionData::Binary {
+                    lhs: Box::new(lhs),
+                    operator,
+                    rhs: Box::new(rhs),
+                }
+            };
+        }
+
+        Some(lhs)
+    }
+
+    fn peek_binary_operator(&self) -> Option<(BinaryOperator, u8)> {
+        match self.peek() {
+            Some(token) => Some(match(token.kind) {
+                TokenKind::Plus => (BinaryOperator::Add, 1),
+                TokenKind::Minus => (BinaryOperator::Subtract, 1),
+                TokenKind::Star => (BinaryOperator::Multiply, 2),
+                TokenKind::Slash => (BinaryOperator::Divide, 2),
+
+                _ => return None,
+            }),
+
+            None => None
+        }
+    }
+
+    fn parse_primary(&mut self) -> Option<Expression> {
         if self.peek_is(TokenKind::NumberLiteral) {
             let number = self.expect(TokenKind::NumberLiteral, "Expected number literal")?;
             return Some(Expression {

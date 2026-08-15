@@ -185,6 +185,35 @@ impl<'src> Analyzer<'src> {
         expected: Option<&Type>
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::Binary {
+                lhs,
+                operator,
+                rhs,
+            } => {
+                let lhs = self.analyze_expression(lhs, Some(&Type::I64));
+                let rhs = self.analyze_expression(rhs, Some(&Type::I64));
+
+                if lhs.type_ == Type::Error || rhs.type_ == Type::Error {
+                    return HirExpression::error(expression.span);
+                }
+
+                if let Some(expected) = expected {
+                    if *expected != Type::I64 {
+                        todo!("Expected {:?} but got i64 binary expression", *expected);
+                    }
+                }
+
+                HirExpression {
+                    span: expression.span,
+                    type_: Type::I64,
+                    data: HirExpressionData::Binary {
+                        lhs: Box::new(lhs),
+                        operator: *operator,
+                        rhs: Box::new(rhs),
+                    }
+                }
+            }
+
             ExpressionData::Function(function) => {
                 let return_type = self.resolve_type_expression(&function.return_type);
 
