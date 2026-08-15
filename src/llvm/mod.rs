@@ -2,6 +2,7 @@ use crate::comptime::EvaluatedProgram;
 use crate::diagnostics::Diagnostic;
 
 pub fn emit(program: &EvaluatedProgram)
-            -> Result<String, Vec<Diagnostic>> {
-
+            -> Result<String, Vec<Diagnostic>>
+{
+    Ok("Hello LLVM".to_owned())
 }

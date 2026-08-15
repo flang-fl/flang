@@ -1,9 +1,9 @@
 use std::{env, fs};
 use crate::comptime::Evaluator;
-use crate::diagnostics::PrintDiagnostics;
+use crate::diagnostics::{Diagnostic, PrintDiagnostics};
 use crate::parser::Parser;
 use crate::semantic::Analyzer;
-use crate::source::SourceFileManager;
+use crate::source::{SourceFile, SourceFileManager};
 use crate::tokenizer::Tokenizer;
 
 pub mod source;
@@ -29,55 +29,50 @@ fn main() {
         panic!("More than one file not currently supported");
     };
 
-    let mut tokenizer = Tokenizer::new(&file);
-
-    let result = tokenizer.tokenize();
-    match result {
+    match compile(file) {
         Err(diagnostics) => {
             diagnostics.print_diagnostics(&mut file_manager);
         }
-        Ok(tokens) => {
-            for token in &tokens {
-                println!("{:?}", token);
-            }
+        Ok(llvm) => {
 
-            let mut parser = Parser::new(&file, &tokens);
-            let result = parser.parse();
-            
-            match result {
-                Err(diagnostics) => {
-                    diagnostics.print_diagnostics(&mut file_manager);
-                }
-                Ok(program) => {
-                    println!("{:#?}", program);
-                    println!();
-
-                    let analyzer = Analyzer::new(&file);
-                    let analyzed = analyzer.analyze(
-                        program
-                    );
-
-                    match analyzed {
-                        Err(diagnostics) => {
-                            diagnostics.print_diagnostics(&mut file_manager);
-                        }
-                        Ok(semantic_program) => {
-                            println!("{:#?}", semantic_program);
-
-                            let evaluator = Evaluator::new(&file);
-
-                            match evaluator.evaluate(semantic_program) {
-                                Err(diagnostics) => {
-                                    diagnostics.print_diagnostics(&mut file_manager);
-                                }
-                                Ok(evaluated_program) => {
-                                    println!("{evaluated_program:#?}");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
+}
+
+fn compile(
+    source: &SourceFile,
+) -> Result<String, Vec<Diagnostic>>
+{
+    let tokenizer = Tokenizer::new(&source);
+    let tokens = tokenizer.tokenize()?;
+    println!("=== Tokens");
+    for token in tokens.iter() {
+        println!("  {token:?}");
+    }
+    println!();
+
+    let parser = Parser::new(&source, &tokens);
+    let ast = parser.parse()?;
+    println!("=== AST");
+    println!("{ast:#?}");
+    println!();
+
+    let analyzer = Analyzer::new(&source);
+    let typed_ast = analyzer.analyze(ast)?;
+    println!("=== Typed AST");
+    println!("{typed_ast:#?}");
+    println!();
+
+    let compile_time_evaluator = Evaluator::new();
+    let evaluated = compile_time_evaluator.evaluate(typed_ast)?;
+    println!("=== Compiletime Evaluated Program");
+    println!("{evaluated:#?}");
+    println!();
+
+    let llvm = llvm::emit(&evaluated)?;
+    println!("=== LLVM");
+    println!("{llvm}");
+    println!();
+
+    Ok(llvm)
 }

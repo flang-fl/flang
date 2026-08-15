@@ -1,11 +1,10 @@
-use std::collections::HashMap;
 use crate::diagnostics::Diagnostic;
-use crate::parser::ast::{Expression, ExpressionData, Phase};
-use crate::semantic::hir::{HirExpression, HirExpressionData, HirFunctionExpression, HirProgram};
+use crate::parser::ast::Phase;
 use crate::semantic::SemanticProgram;
+use crate::semantic::hir::{HirExpression, HirExpressionData, HirFunctionExpression, HirProgram};
 use crate::semantic::symbols::{SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
-use crate::source::SourceFile;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum ComptimeValue {
@@ -23,19 +22,15 @@ pub struct EvaluatedProgram {
     pub hir: HirProgram
 }
 
-pub struct Evaluator<'src> {
-    source: &'src SourceFile,
+pub struct Evaluator {
     values: ValueStore,
     functions: FunctionStore,
     diagnostics: Vec<Diagnostic>
 }
 
-impl<'src> Evaluator<'src> {
-    pub fn new(
-        source: &'src SourceFile,
-    ) -> Self {
+impl Evaluator {
+    pub fn new() -> Self {
         Self {
-            source,
             values: ValueStore { map: HashMap::new() },
             functions: FunctionStore { functions: Vec::new() },
             diagnostics: Vec::new(),
