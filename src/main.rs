@@ -1,4 +1,5 @@
 use std::{env, fs};
+use std::path::Path;
 use crate::comptime::Evaluator;
 use crate::diagnostics::{Diagnostic, PrintDiagnostics};
 use crate::parser::Parser;
@@ -13,6 +14,7 @@ mod parser;
 mod semantic;
 mod comptime;
 mod llvm;
+mod toolchain;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -34,7 +36,43 @@ fn main() {
             diagnostics.print_diagnostics(&mut file_manager);
         }
         Ok(llvm) => {
+            let source_path = Path::new(&file.name);
 
+            let build_dir = source_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("build");
+
+            let stem = source_path
+                .file_stem()
+                .expect("source path should have a filename");
+
+            let artifact_base = build_dir.join(stem);
+
+            let ir_path = artifact_base.with_extension("ll");
+
+            let executable_path = if env::consts::EXE_EXTENSION.is_empty() {
+                artifact_base.clone()
+            } else {
+                artifact_base.with_extension(env::consts::EXE_EXTENSION)
+            };
+
+            match toolchain::build_executable(
+                &llvm,
+                &ir_path,
+                &executable_path,
+            ) {
+                Ok(()) => {
+                    println!(
+                        "built {}",
+                        executable_path.display()
+                    );
+                }
+
+                Err(error) => {
+                    eprintln!("toolchain error: {error:#?}");
+                }
+            }
         }
     }
 }
