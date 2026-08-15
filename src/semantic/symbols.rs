@@ -61,6 +61,17 @@ impl SymbolTable {
     pub fn get_mut(&mut self, id: SymbolId) -> &mut Symbol {
         &mut self.symbols[id.0 as usize]
     }
+
+    pub fn find_by_name(&self, name: &str)
+        -> Option<(SymbolId, &Symbol)>
+    {
+        let (id, symbol) = self.symbols
+            .iter()
+            .enumerate()
+            .find(|(_, symbol)| symbol.name == name)?;
+
+        Some((SymbolId(id as u32), symbol))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

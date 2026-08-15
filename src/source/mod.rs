@@ -3,7 +3,7 @@ use std::ops::AddAssign;
 use ariadne::Source;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SourceId(usize);
+pub struct SourceId(pub usize);
 
 pub struct SourceFileManager {
     files: Vec<SourceFile>,

@@ -64,11 +64,11 @@ impl Diagnostic {
     }
 
     pub fn error(
-        message: String,
+        message: impl Into<String>,
         span: Span,
-        text: String,
+        text: impl Into<String>,
     ) -> Self {
-        Self::new(Severity::Error, message, Label::new(span, text), vec![])
+        Self::new(Severity::Error, message.into(), Label::new(span, text.into()), vec![])
     }
 
     pub fn warning(

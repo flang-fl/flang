@@ -149,7 +149,7 @@ impl Evaluator {
                 };
 
                 self.diagnostics.push(Diagnostic::error(
-                    "Value unavailable at compile time".to_owned(),
+                    "Value unavailable at compile time",
                     expression.span,
                     message,
                 ));
