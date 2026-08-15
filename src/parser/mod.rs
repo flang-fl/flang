@@ -53,11 +53,16 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         let expression = self.parse_expression()?;
 
+        let semi = self.expect(
+            TokenKind::Semi,
+            "expected `;` after binding",
+        )?;
+
         Some(Item {
-            span: self.source.fromto(comp.span, expression.span),
+            span: self.source.fromto(comp.span, semi.span),
             data: ItemData::Binding(Binding {
                 name: identifier.span,
-                expression: expression,
+                expression,
                 type_annotation: None, // TODO
                 mutable: false, // TODO
                 phase: Comptime
