@@ -1,7 +1,7 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue, EvaluatedProgram};
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase;
-use crate::semantic::hir::{HirExpressionData, HirStatementData};
+use crate::semantic::hir::{HirExpression, HirExpressionData, HirStatementData};
 use crate::semantic::symbols::SymbolKind;
 use crate::semantic::types::Type;
 use crate::source::{SourceId, Span};
@@ -65,7 +65,7 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
         todo!("`main` must have no parameters");
     }
 
-    let Ok(body) = emit_i64_body(&main_fn) else {
+    let Ok(body) = emit_i64_body(&main_fn, program) else {
         todo!("explosion");
     };
 
@@ -87,7 +87,8 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
 }
 
 fn emit_i64_body(
-    function: &ComptimeFunction
+    function: &ComptimeFunction,
+    program: &EvaluatedProgram,
 ) -> Result<String, Diagnostic> {
     let [statement] = function.hir.body.statements.as_slice() else {
         todo!("For now: Requires exactly one statement in main");
@@ -95,19 +96,47 @@ fn emit_i64_body(
 
     match &statement.data {
         HirStatementData::Return(Some(expression)) => {
-            match &expression.data {
-                HirExpressionData::Integer(value) => {
-                    Ok(format!("  ret i64 {value}\n"))
-                }
-
-                _ => {
-                    todo!("For now: Requires an integer literal return in main");
-                }
-            }
+            let operand = emit_i64_expression(expression, program)?;
+            Ok(format!("  ret i64 {operand}\n"))
         }
 
         HirStatementData::Return(None) => {
             todo!("No empty returns in main")
+        }
+    }
+}
+
+fn emit_i64_expression(
+    expression: &HirExpression,
+    program: &EvaluatedProgram,
+) -> Result<String, Diagnostic> {
+    match &expression.data {
+        HirExpressionData::Integer(value) => {
+            Ok(value.to_string())
+        }
+
+        HirExpressionData::Symbol(symbol_id) => {
+            match program.values.get(*symbol_id) {
+                Some(ComptimeValue::I64(value)) => {
+                    Ok(value.to_string())
+                }
+
+                Some(_) => {
+                    todo!("Diagnostic: symbol isn't an i64 constant");
+                }
+
+                None => {
+                    todo!("Eventually this may be a runtime variable or parameter");
+                }
+            }
+        }
+
+        HirExpressionData::Error => {
+            panic!("This should have been caught before LLVM generation");
+        }
+
+        HirExpressionData::Function(_) => {
+            todo!("Diagnostic: functions arent i64s smh");
         }
     }
 }

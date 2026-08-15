@@ -251,7 +251,56 @@ impl<'src> Analyzer<'src> {
                     data: HirExpressionData::Integer(parsed)
                 }
             }
-            ExpressionData::Name => todo!(),
+
+            ExpressionData::Name => {
+                let name = self.source.span_text(expression.span);
+                let symbol_id = self.environment.lookup(name);
+                let Some(symbol_id) = symbol_id else {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Identifier not bound",
+                        expression.span,
+                        format!("Identifier {name} is not bound")
+                    ));
+                    return HirExpression::error(expression.span);
+                };
+
+                let actual_type = self.symbols.get(symbol_id).type_.clone();
+
+                if actual_type == Type::Unknown {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Identifier not yet bound",
+                        expression.span,
+                        format!("Identifier {name} is not yet bound, in the future this will be allowed but rn stuff is evaluated top to bottom")
+                    ));
+                    return HirExpression::error(expression.span);
+                }
+
+                if actual_type == Type::Error {
+                    // The binding already produced a diagnostic
+                    return HirExpression::error(expression.span);
+                }
+
+                if let Some(expected_type) = expected {
+                    if *expected_type != Type::Error && *expected_type != actual_type {
+                        self.diagnostics.push(Diagnostic::error(
+                            format!(
+                                "Expected an expression of type `{:?}` but got an expression of type `{:?}`",
+                                expected_type, actual_type
+                            ),
+                            expression.span,
+                            format!("Should be of type `{:?}`", expected_type)
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                }
+
+                HirExpression {
+                    span: expression.span,
+                    type_: actual_type,
+                    data: HirExpressionData::Symbol(symbol_id)
+                }
+            },
         }
     }
 

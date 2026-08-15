@@ -112,6 +112,14 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             })
         }
 
+        if self.peek_is(TokenKind::Identifier) {
+            let identifier = self.expect(TokenKind::Identifier, "Expected identifier")?;
+            return Some(Expression {
+                span: identifier.span,
+                data: ExpressionData::Name,
+            });
+        }
+
         None
     }
 

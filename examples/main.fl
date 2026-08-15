@@ -1,3 +1,5 @@
+comp silly = 42;
+
 comp main = fn() -> i64 {
-    return 6;
+    return silly;
 };

@@ -35,6 +35,16 @@ pub struct HirExpression {
     pub data: HirExpressionData,
 }
 
+impl HirExpression {
+    pub fn error(span: Span) -> Self {
+        Self {
+            type_: Type::Error,
+            data: HirExpressionData::Error,
+            span
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum HirExpressionData {
     Function(HirFunctionExpression),
