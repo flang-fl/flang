@@ -135,36 +135,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         }
 
         if self.peek_is(TokenKind::Fn) {
-            let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
-
-            self.expect(TokenKind::LParen, "Expected `)`")?;
-            // TODO
-            let rparen = self.expect(TokenKind::RParen, "Expected `)`")?;
-
-            let return_type = if self.peek_is(TokenKind::RArrow) {
-                self.expect(TokenKind::RArrow, "Expected `->`")?;
-                self.parse_type_expression()?
-            } else {
-                TypeExpression {
-                    span: rparen.span,
-                    data: TypeExpressionData::Unit
-                }
-            };
-
-            let body = self.parse_body()?;
-
-            let end_span = body.span;
-
-            let data = ExpressionData::Function(FunctionExpression {
-                parameters: Vec::new(), // TODO,
-                return_type,
-                body,
-            });
-
-            return Some(Expression {
-                span: self.source.fromto(fn_.span, end_span),
-                data,
-            })
+            return self.parse_function_literal();
         }
 
         if self.peek_is(TokenKind::Identifier) {
@@ -176,6 +147,39 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         }
 
         None
+    }
+
+    fn parse_function_literal(&mut self) -> Option<Expression> {
+        let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
+
+        self.expect(TokenKind::LParen, "Expected `)`")?;
+        // TODO
+        let rparen = self.expect(TokenKind::RParen, "Expected `)`")?;
+
+        let return_type = if self.peek_is(TokenKind::RArrow) {
+            self.expect(TokenKind::RArrow, "Expected `->`")?;
+            self.parse_type_expression()?
+        } else {
+            TypeExpression {
+                span: rparen.span,
+                data: TypeExpressionData::Unit
+            }
+        };
+
+        let body = self.parse_body()?;
+
+        let end_span = body.span;
+
+        let data = ExpressionData::Function(FunctionExpression {
+            parameters: Vec::new(), // TODO,
+            return_type,
+            body,
+        });
+
+        Some(Expression {
+            span: self.source.fromto(fn_.span, end_span),
+            data,
+        })
     }
 
     fn parse_type_expression(&mut self) -> Option<TypeExpression> {
