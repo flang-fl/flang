@@ -1,0 +1,10 @@
+comp enabled = true;
+
+comp identity = fn(value: bool) -> bool {
+    let result = value;
+    return result;
+};
+
+comp main = fn() -> i64 {
+    return 42;
+};

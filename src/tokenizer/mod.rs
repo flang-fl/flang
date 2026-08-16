@@ -88,6 +88,8 @@ impl<'src> Tokenizer<'src> {
             "fn" => Some(TokenKind::Fn),
             "let" => Some(TokenKind::Let),
             "comp" => Some(TokenKind::Comp),
+            "true" => Some(TokenKind::True),
+            "false" => Some(TokenKind::False),
             "return" => Some(TokenKind::Return),
 
             _ => None,
@@ -112,7 +114,6 @@ impl<'src> Tokenizer<'src> {
         };
 
         let single_char_token_kind = match next {
-            '=' => TokenKind::Eq,
             '(' => TokenKind::LParen,
             ')' => TokenKind::RParen,
             '{' => TokenKind::LCurly,
@@ -139,6 +140,21 @@ impl<'src> Tokenizer<'src> {
             }
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
+
+            '=' => {
+                if self.peek_offset(1) == Some('=') {
+                    let start = self.index;
+                    self.next();
+                    self.next();
+                    let end = self.index;
+
+                    return Some(Token {
+                        span: self.source.span(start, end),
+                        kind: TokenKind::EqEq
+                    });
+                }
+                TokenKind::Eq
+            },
 
             _ => return None,
         };
@@ -186,10 +202,13 @@ pub enum TokenKind {
     Fn,
     Let,
     Comp,
+    True,
+    False,
     Return,
 
     // Symbols
     Eq,
+    EqEq,
     Semi,
     Plus,
     Star,

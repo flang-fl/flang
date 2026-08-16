@@ -12,6 +12,7 @@ pub enum ComptimeValue {
     I64(i64),
     Function(FunctionId),
     Type(Type),
+    Bool(bool),
     Unit,
     Error,
 }
@@ -102,6 +103,8 @@ impl Evaluator {
         symbols: &SymbolTable,
     ) -> ComptimeValue {
         match &expression.data {
+            HirExpressionData::Bool(bool) => ComptimeValue::Bool(*bool),
+
             HirExpressionData::Function(function) => {
                 let function_id = self.functions.insert(ComptimeFunction {
                     hir: function.clone()

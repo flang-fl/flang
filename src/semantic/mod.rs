@@ -46,6 +46,14 @@ impl<'src> Analyzer<'src> {
 
         environment.define("unit".to_owned(), unit_id);
 
+        let bool_id = symbols.insert(Symbol {
+            name: "bool".to_owned(),
+            kind: SymbolKind::BuiltinType(Type::Bool),
+            declaration_span: None,
+            type_: Type::Type
+        });
+
+        environment.define("bool".to_owned(), bool_id);
 
         Self {
             source,
@@ -186,6 +194,29 @@ impl<'src> Analyzer<'src> {
         expected: Option<&Type>
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::Boolean(bool) => {
+                if let Some(expected) = expected {
+                    if *expected != Type::Bool {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Type mismatch",
+                            expression.span,
+                            format!(
+                                "Expected expression of type `{:?}` but got `{:?}`",
+                                expected,
+                                Type::Bool
+                            )
+                        ));
+                        return HirExpression::error(expression.span);
+                    }
+                }
+
+                HirExpression {
+                    span: expression.span,
+                    type_: Type::Bool,
+                    data: HirExpressionData::Bool(*bool)
+                }
+            }
+
             ExpressionData::Binary {
                 lhs,
                 operator,
@@ -388,11 +419,7 @@ impl<'src> Analyzer<'src> {
                                 expected
                             )
                         ));
-                        return HirExpression {
-                            type_: Type::Error,
-                            span: expression.span,
-                            data: HirExpressionData::Error
-                        };
+                        return HirExpression::error(expression.span);
                     }
                 }
 
@@ -406,11 +433,7 @@ impl<'src> Analyzer<'src> {
                         expression.span,
                         ":(".to_owned()
                     ));
-                    return HirExpression {
-                        type_: Type::Error,
-                        span: expression.span,
-                        data: HirExpressionData::Error
-                    };
+                    return HirExpression::error(expression.span);
                 };
 
                 HirExpression {

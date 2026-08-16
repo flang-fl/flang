@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     I64,
+    Bool,
     Unit,
     Function {
         parameters: Vec<Type>,

@@ -167,6 +167,22 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_primary(&mut self) -> Option<Expression> {
+        if self.peek_is(TokenKind::True) {
+            let true_ = self.expect(TokenKind::True, "Expected `true`")?;
+            return Some(Expression {
+                span: true_.span,
+                data: ExpressionData::Boolean(true)
+            });
+        }
+        
+        if self.peek_is(TokenKind::False) {
+            let false_ = self.expect(TokenKind::False, "Expected `false`")?;
+            return Some(Expression {
+                span: false_.span,
+                data: ExpressionData::Boolean(false)
+            })
+        }
+        
         if self.peek_is(TokenKind::NumberLiteral) {
             let number = self.expect(TokenKind::NumberLiteral, "Expected number literal")?;
             return Some(Expression {

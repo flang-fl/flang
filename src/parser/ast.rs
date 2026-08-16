@@ -41,6 +41,7 @@ pub struct Expression {
 pub enum ExpressionData {
     Function(FunctionExpression),
     IntegerLiteral,
+    Boolean(bool),
     Name,
     Binary {
         lhs: Box<Expression>,

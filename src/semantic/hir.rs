@@ -50,6 +50,7 @@ pub enum HirExpressionData {
     Function(HirFunctionExpression),
     Integer(i64),
     Symbol(SymbolId),
+    Bool(bool),
     Binary {
         lhs: Box<HirExpression>,
         operator: BinaryOperator,

@@ -7,6 +7,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue};
 use std::collections::HashMap;
+use inkwell::types::IntType;
 use crate::parser::ast::BinaryOperator;
 
 pub fn emit(program: &EvaluatedProgram) -> Result<String, String> {
@@ -144,29 +145,19 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     }
 
     fn declare_functions(&mut self) -> Result<(), String> {
-        let i64_type = self.context.i64_type();
-
         for (function_id, function) in self.program.functions.iter() {
-            if function.hir.return_type != Type::I64 {
-                return Err("Inkwell backend currently requires i64 return types".to_owned());
-            }
+            let return_type = self.llvm_int_type(&function.hir.return_type)?;
 
             let parameter_types = function
                 .hir
                 .parameters
                 .iter()
                 .map(|parameter| {
-                    if parameter.type_ != Type::I64 {
-                        return Err(
-                            "Inkwell backend currently requires i64 return types".to_owned()
-                        );
-                    }
-
-                    Ok(i64_type.into())
+                    self.llvm_int_type(&parameter.type_).map(Into::into)
                 })
                 .collect::<Result<Vec<_>, String>>()?;
 
-            let function_type = i64_type.fn_type(&parameter_types, false);
+            let function_type = return_type.fn_type(&parameter_types, false);
 
             let name = llvm_function_name(function_id);
 
@@ -223,17 +214,17 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     symbol,
                     expression
                 } => {
-                    let value = self.emit_i64_expression(expression, &operands)?;
+                    let value = self.emit_expression(expression, &operands)?;
                     operands.insert(*symbol, value);
                 },
 
                 HirStatementData::Return(Some(expression)) => {
-                    let value = self.emit_i64_expression(expression, &operands)?;
+                    let value = self.emit_expression(expression, &operands)?;
 
                     self.builder
                         .build_return(Some(&value))
                         .map_err(|error| error.to_string())?;
-                    
+
                     return Ok(());
                 }
 
@@ -249,7 +240,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         Err("Function body without a return".to_owned())
     }
 
-    fn emit_i64_expression(
+    fn emit_expression(
         &self,
         expression: &HirExpression,
         operands: &HashMap<SymbolId, IntValue<'ctx>>,
@@ -269,6 +260,14 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                         Ok(self.context.i64_type().const_int(*value as u64, true))
                     }
 
+                    Some(ComptimeValue::Bool(value)) => {
+                        Ok(
+                            self.context
+                                .bool_type()
+                                .const_int(u64::from(*value), false)
+                        )
+                    }
+
                     _ => Err("symbol has no available i64 LLVM value".to_owned()),
                 }
             }
@@ -278,8 +277,8 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 operator,
                 rhs
             } => {
-                let lhs = self.emit_i64_expression(lhs, operands)?;
-                let rhs = self.emit_i64_expression(rhs, operands)?;
+                let lhs = self.emit_expression(lhs, operands)?;
+                let rhs = self.emit_expression(rhs, operands)?;
 
                 let result = match operator {
                     BinaryOperator::Add => {
@@ -327,7 +326,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 let llvm_arguments = arguments
                     .iter()
                     .map(|argument| {
-                        self.emit_i64_expression(argument, operands)
+                        self.emit_expression(argument, operands)
                             .map(BasicMetadataValueEnum::from)
                     })
                     .collect::<Result<Vec<_>, String>>()?;
@@ -348,9 +347,19 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     })?;
 
                 Ok(value.into_int_value())
+            },
+
+            HirExpressionData::Bool(bool) => {
+                Ok(
+                    self.context
+                        .bool_type()
+                        .const_int(u64::from(*bool), false)
+                )
             }
 
-            _ => Err("expression is not supported by Inkwell backend yet".to_owned()),
+            HirExpressionData::Function(_) | HirExpressionData::Error => {
+                Err("expression is not supported by Inkwell backend yet".to_owned())
+            }
         }
     }
 
@@ -382,26 +391,13 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 )
             })
     }
-}
 
-pub fn emit_empty_module() -> Result<String, String> {
-    let context = Context::create();
-    let module = context.create_module("flang");
-
-    module.verify().map_err(|e| e.to_string())?;
-
-    Ok(module.print_to_string().to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inkwell_creates_valid_empty_module() {
-        let llvm = emit_empty_module().expect("Failed to emit llvm module");
-
-        assert!(llvm.contains("ModuleID"))
+    fn llvm_int_type(&self, type_: &Type) -> Result<IntType<'ctx>, String> {
+        match type_ {
+            Type::I64 => Ok(self.context.i64_type()),
+            Type::Bool => Ok(self.context.bool_type()),
+            _ => Err(format!("unsupported LLVM value type: {type_:?}"))
+        }
     }
 }
 
