@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{Binding, Block, Expression, ExpressionData, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::parser::ast::{BinaryOperator, Binding, Block, Expression, ExpressionData, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
 use crate::semantic::hir::{HirBinding, HirBlock, HirExpression, HirExpressionData, HirFunctionExpression, HirParameter, HirProgram, HirStatement, HirStatementData};
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
@@ -222,22 +222,65 @@ impl<'src> Analyzer<'src> {
                 operator,
                 rhs,
             } => {
-                let lhs = self.analyze_expression(lhs, Some(&Type::I64));
-                let rhs = self.analyze_expression(rhs, Some(&Type::I64));
+                let expected_type = if operator.is_arithmetic() {
+                    Some(&Type::I64)
+                } else {
+                    None
+                };
+
+                let lhs = self.analyze_expression(lhs, expected_type);
+
+                let expected_rhs_type = if let Some(expected_type) = expected_type {
+                    expected_type
+                } else {
+                    &lhs.type_
+                };
+
+                let rhs = self.analyze_expression(rhs, Some(expected_rhs_type));
 
                 if lhs.type_ == Type::Error || rhs.type_ == Type::Error {
                     return HirExpression::error(expression.span);
                 }
 
+                if *operator == BinaryOperator::Equal
+                    && !matches!(lhs.type_, Type::I64 | Type::Bool)
+                {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Type does not support Equality",
+                        expression.span,
+                        format!("{:?}", lhs.type_)
+                    ));
+                    return HirExpression::error(expression.span);
+                }
+
+                let resulting_type = match operator {
+                    BinaryOperator::Equal => Type::Bool,
+
+                    BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide => Type::I64,
+                };
+
                 if let Some(expected) = expected {
-                    if *expected != Type::I64 {
-                        todo!("Expected {:?} but got i64 binary expression", *expected);
+                    if *expected != resulting_type {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Type mismatch",
+                            expression.span,
+                            format!(
+                                "Expected `{:?}`, but this operator produces `{:?}`",
+                                expected,
+                                resulting_type
+                            ),
+                        ));
+
+                        return HirExpression::error(expression.span);
                     }
                 }
 
                 HirExpression {
                     span: expression.span,
-                    type_: Type::I64,
+                    type_: resulting_type,
                     data: HirExpressionData::Binary {
                         lhs: Box::new(lhs),
                         operator: *operator,

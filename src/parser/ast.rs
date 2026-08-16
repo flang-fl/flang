@@ -1,3 +1,4 @@
+use crate::semantic::types::Type;
 use crate::source::Span;
 
 #[derive(Debug, Clone)]
@@ -60,6 +61,17 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+
+    Equal,
+}
+
+impl BinaryOperator {
+    pub fn is_arithmetic(self) -> bool {
+        matches!(
+            self,
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

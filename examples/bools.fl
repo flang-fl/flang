@@ -1,7 +1,7 @@
 comp enabled = true;
 
-comp identity = fn(value: bool) -> bool {
-    let result = value;
+comp identity = fn(other: i64) -> bool {
+    let result = 1 == other;
     return result;
 };
 

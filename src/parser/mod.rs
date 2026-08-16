@@ -1,9 +1,12 @@
-use std::cmp::min;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::parser::ast::{
+    BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData,
+    Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData,
+};
 use crate::source::SourceFile;
 use crate::tokenizer::{Token, TokenKind};
+use std::cmp::min;
 
 pub mod ast;
 
@@ -25,9 +28,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     pub fn parse(mut self) -> Result<Program, Vec<Diagnostic>> {
-        let mut program = Program {
-            items: Vec::new(),
-        };
+        let mut program = Program { items: Vec::new() };
 
         while self.peek().is_some() {
             let item = self.parse_item();
@@ -48,16 +49,16 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     fn parse_item(&mut self) -> Option<Item> {
         let comp = self.expect(TokenKind::Comp, "Expected `comp` at top-level Declaration")?;
 
-        let identifier = self.expect(TokenKind::Identifier, "Expected identifier at top-level Binding")?;
+        let identifier = self.expect(
+            TokenKind::Identifier,
+            "Expected identifier at top-level Binding",
+        )?;
 
         self.expect(TokenKind::Eq, "Expected `=` at top-level Binding")?;
 
         let expression = self.parse_expression()?;
 
-        let semi = self.expect(
-            TokenKind::Semi,
-            "expected `;` after binding",
-        )?;
+        let semi = self.expect(TokenKind::Semi, "expected `;` after binding")?;
 
         Some(Item {
             span: self.source.fromto(comp.span, semi.span),
@@ -65,9 +66,9 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 name: identifier.span,
                 expression,
                 type_annotation: None, // TODO
-                mutable: false, // TODO
-                phase: Comptime
-            })
+                mutable: false,        // TODO
+                phase: Comptime,
+            }),
         })
     }
 
@@ -75,16 +76,11 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         self.parse_binary_expression(0)
     }
 
-    fn parse_binary_expression(
-        &mut self,
-        minimum_precedence: u8,
-    ) -> Option<Expression> {
+    fn parse_binary_expression(&mut self, minimum_precedence: u8) -> Option<Expression> {
         let mut lhs = self.parse_postfix_expression()?;
 
         loop {
-            let Some((operator, precedence)) =
-              self.peek_binary_operator()
-            else {
+            let Some((operator, precedence)) = self.peek_binary_operator() else {
                 break;
             };
 
@@ -103,7 +99,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                     lhs: Box::new(lhs),
                     operator,
                     rhs: Box::new(rhs),
-                }
+                },
             };
         }
 
@@ -135,10 +131,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             }
         }
 
-        let rparen = self.expect(
-            TokenKind::RParen,
-            "Expected `)` after call arguments"
-        )?;
+        let rparen = self.expect(TokenKind::RParen, "Expected `)` after call arguments")?;
 
         let span = self.source.fromto(callee.span, rparen.span);
 
@@ -147,22 +140,31 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             data: ExpressionData::Call {
                 callee: Box::new(callee),
                 arguments,
-            }
+            },
         })
     }
 
     fn peek_binary_operator(&self) -> Option<(BinaryOperator, u8)> {
+        const PRECEDENCE_EQUALITY: u8 = 1;
+        const PRECEDENCE_COMPARISON: u8 = 2;
+        const PRECEDENCE_ADDITIVE: u8 = 3;
+        const PRECEDENCE_MULTIPLICATIVE: u8 = 4;
+
         match self.peek() {
-            Some(token) => Some(match(token.kind) {
-                TokenKind::Plus => (BinaryOperator::Add, 1),
-                TokenKind::Minus => (BinaryOperator::Subtract, 1),
-                TokenKind::Star => (BinaryOperator::Multiply, 2),
-                TokenKind::Slash => (BinaryOperator::Divide, 2),
+            Some(token) => Some(match (token.kind) {
+                TokenKind::EqEq => (BinaryOperator::Equal, PRECEDENCE_EQUALITY),
+
+                // TokenKind::LessEq => (BinaryOperator::LessOrEqual, PRECEDENCE_COMPARISON)
+                
+                TokenKind::Plus => (BinaryOperator::Add, PRECEDENCE_ADDITIVE),
+                TokenKind::Minus => (BinaryOperator::Subtract, PRECEDENCE_ADDITIVE),
+                TokenKind::Star => (BinaryOperator::Multiply, PRECEDENCE_MULTIPLICATIVE),
+                TokenKind::Slash => (BinaryOperator::Divide, PRECEDENCE_MULTIPLICATIVE),
 
                 _ => return None,
             }),
 
-            None => None
+            None => None,
         }
     }
 
@@ -171,23 +173,23 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             let true_ = self.expect(TokenKind::True, "Expected `true`")?;
             return Some(Expression {
                 span: true_.span,
-                data: ExpressionData::Boolean(true)
+                data: ExpressionData::Boolean(true),
             });
         }
-        
+
         if self.peek_is(TokenKind::False) {
             let false_ = self.expect(TokenKind::False, "Expected `false`")?;
             return Some(Expression {
                 span: false_.span,
-                data: ExpressionData::Boolean(false)
-            })
+                data: ExpressionData::Boolean(false),
+            });
         }
-        
+
         if self.peek_is(TokenKind::NumberLiteral) {
             let number = self.expect(TokenKind::NumberLiteral, "Expected number literal")?;
             return Some(Expression {
                 span: number.span,
-                data: ExpressionData::IntegerLiteral
+                data: ExpressionData::IntegerLiteral,
             });
         }
 
@@ -213,7 +215,10 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         let mut parameters = Vec::new();
         while !self.peek_is(TokenKind::RParen) {
-            let identifier = self.expect(TokenKind::Identifier, "Expected identifier of function parameters")?;
+            let identifier = self.expect(
+                TokenKind::Identifier,
+                "Expected identifier of function parameters",
+            )?;
             self.expect(TokenKind::Colon, "Expected `:`")?;
             let type_ = self.parse_type_expression()?;
 
@@ -238,7 +243,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         } else {
             TypeExpression {
                 span: rparen.span,
-                data: TypeExpressionData::Unit
+                data: TypeExpressionData::Unit,
             }
         };
 
@@ -262,7 +267,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let identifier = self.expect(TokenKind::Identifier, "Expected Type")?;
         Some(TypeExpression {
             span: identifier.span,
-            data: TypeExpressionData::Identifier
+            data: TypeExpressionData::Identifier,
         })
     }
 
@@ -286,19 +291,13 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     fn parse_statement(&mut self) -> Option<Statement> {
         if self.peek_is(TokenKind::Let) {
             let let_ = self.expect(TokenKind::Let, "Expected let")?;
-            let name = self.expect(
-                TokenKind::Identifier,
-                "Expected binding name after `let`"
-            )?;
+            let name = self.expect(TokenKind::Identifier, "Expected binding name after `let`")?;
 
             self.expect(TokenKind::Eq, "Expected `=` after binding name")?;
 
             let expression = self.parse_expression()?;
 
-            let semi = self.expect(
-                TokenKind::Semi,
-                "Expected `;` after local binding"
-            )?;
+            let semi = self.expect(TokenKind::Semi, "Expected `;` after local binding")?;
 
             Some(Statement {
                 span: self.source.fromto(let_.span, semi.span),
@@ -319,12 +318,15 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             } else {
                 let expression = self.parse_expression()?;
                 let semi = self.expect(TokenKind::Semi, "Expected `;`")?;
-                (Some(expression), self.source.fromto(return_.span, semi.span))
+                (
+                    Some(expression),
+                    self.source.fromto(return_.span, semi.span),
+                )
             };
 
             Some(Statement {
                 span,
-                data: StatementData::Return(expression)
+                data: StatementData::Return(expression),
             })
         } else {
             None
@@ -355,11 +357,10 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
     fn expect(&mut self, kind: TokenKind, description: &str) -> Option<Token> {
         let Some(token) = self.peek() else {
-            let span = self.tokens.last()
-                .map(|token| self.source.span(
-                    token.span.end,
-                    token.span.end,
-                ))
+            let span = self
+                .tokens
+                .last()
+                .map(|token| self.source.span(token.span.end, token.span.end))
                 .unwrap_or(self.source.span(0, 0));
 
             self.diagnostics.push(Diagnostic::error(

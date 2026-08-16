@@ -7,6 +7,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue};
 use std::collections::HashMap;
+use inkwell::IntPredicate;
 use inkwell::types::IntType;
 use crate::parser::ast::BinaryOperator;
 
@@ -268,7 +269,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                         )
                     }
 
-                    _ => Err("symbol has no available i64 LLVM value".to_owned()),
+                    _ => Err("symbol has no available LLVM value".to_owned()),
                 }
             }
 
@@ -281,6 +282,15 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 let rhs = self.emit_expression(rhs, operands)?;
 
                 let result = match operator {
+                    BinaryOperator::Equal => {
+                        self.builder.build_int_compare(
+                            IntPredicate::EQ,
+                            lhs,
+                            rhs,
+                            "eqltmp",
+                        )
+                    }
+                    
                     BinaryOperator::Add => {
                         self.builder.build_int_add(
                             lhs,
@@ -343,7 +353,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     .try_as_basic_value()
                     .basic()
                     .ok_or_else(|| {
-                        "expected runtime call to produce an i64 value".to_owned()
+                        "expected runtime call to produce an integer-like value".to_owned()
                     })?;
 
                 Ok(value.into_int_value())
