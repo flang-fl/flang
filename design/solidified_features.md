@@ -9,7 +9,7 @@ The compiler currently supports a single-source file
 - `return` statements
 - static checking of returned integer values against `i64`
 - compile-time creation of function values
-- function identity represented independently from the binding through `FunctionId`
+- function identity represented independently of the binding through `FunctionId`
 - LLVM IR generation for a zero-parameter function returning one `i64` literal
 - native executable generation through Clang
 
@@ -21,6 +21,8 @@ comp main = fn() -> i64 {
 ```
 
 # Implemented
+
+## Comptime and Runtime function calls
 
 ## Comptime Function Binding
 An anonymous function expression creates a function value.
