@@ -4,8 +4,8 @@ comp add = fn(a: i64, b: i64) -> i64 {
     return a + b;
 };
 
-comp answer = add(40, 2);
+comp answer = add(38, 2);
 
 comp main = fn() -> i64 {
-    return add(answer, 2);
+    return add(add(answer, 1), 1);
 };

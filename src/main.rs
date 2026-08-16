@@ -166,7 +166,7 @@ mod tests {
         .expect("program should compile");
 
         assert!(
-            llvm.contains("define i64 @flang_main()"),
+            llvm.contains("define i64 @flang_fn_0()"),
             "generated LLVM:\n{llvm}"
         );
 

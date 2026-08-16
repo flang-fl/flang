@@ -315,7 +315,7 @@ impl Evaluator {
             HirExpressionData::Error => ComptimeValue::Error,
         }
     }
-    
+
     fn evaluate_function_body(
         &mut self,
         function: &HirFunctionExpression,
@@ -327,15 +327,15 @@ impl Evaluator {
                 function.body.span,
                 ":("
             ));
-            
+
             return ComptimeValue::Error;
         };
-        
+
         match &statement.data {
             HirStatementData::Return(Some(expression)) => {
                 self.evaluate_expression(expression, symbols)
             }
-            
+
             HirStatementData::Return(None) => {
                 ComptimeValue::Unit
             }
@@ -361,6 +361,12 @@ impl ValueStore {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FunctionId(u32);
 
+impl FunctionId {
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
 #[derive(Debug)]
 pub struct FunctionStore {
     functions: Vec<ComptimeFunction>,
@@ -375,6 +381,15 @@ impl FunctionStore {
 
     pub fn get(&self, id: FunctionId) -> Option<&ComptimeFunction> {
         self.functions.get(id.0 as usize)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (FunctionId, &ComptimeFunction)> {
+        self.functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| {
+                (FunctionId(index as u32), function)
+            })
     }
 }
 

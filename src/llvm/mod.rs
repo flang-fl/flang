@@ -1,23 +1,42 @@
-use crate::comptime::{ComptimeFunction, ComptimeValue, EvaluatedProgram};
+use crate::comptime::{ComptimeFunction, ComptimeValue, EvaluatedProgram, FunctionId};
 use crate::diagnostics::Diagnostic;
-use crate::parser::ast::{BinaryOperator, Phase, Program};
+use crate::parser::ast::{BinaryOperator, Phase};
 use crate::semantic::hir::{HirExpression, HirExpressionData, HirStatementData};
-use crate::semantic::symbols::SymbolKind;
+use crate::semantic::symbols::{SymbolId, SymbolKind};
 use crate::semantic::types::Type;
 use crate::source::{SourceId, Span};
+use std::collections::HashMap;
 
 struct FunctionEmitter<'program> {
     program: &'program EvaluatedProgram,
     instructions: String,
     next_temporary: usize,
+    parameter_operands: HashMap<SymbolId, String>,
 }
 
 impl<'program> FunctionEmitter<'program> {
-    fn new(program: &'program EvaluatedProgram) -> Self {
+    fn new(
+        program: &'program EvaluatedProgram,
+        function: &ComptimeFunction,
+    ) -> Self {
+        let parameter_operands = function
+            .hir
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                (
+                    parameter.symbol,
+                    format!("%arg{index}")
+                )
+            })
+            .collect();
+
         Self {
             program,
             instructions: String::new(),
             next_temporary: 0,
+            parameter_operands,
         }
     }
 
@@ -37,6 +56,12 @@ impl<'program> FunctionEmitter<'program> {
             }
 
             HirExpressionData::Symbol(symbol_id) => {
+                if let Some(operand) =
+                    self.parameter_operands.get(symbol_id)
+                {
+                    return Ok(operand.clone());
+                }
+
                 match self.program.values.get(*symbol_id) {
                     Some(ComptimeValue::I64(value)) => {
                         Ok(value.to_string())
@@ -81,13 +106,53 @@ impl<'program> FunctionEmitter<'program> {
             }
 
             HirExpressionData::Call {
-                ..
+                callee,
+                arguments,
             } => {
-                Err(Diagnostic::error(
-                    "TODO: Runtime function calls are currently not supported",
-                    expression.span,
-                    ":("
-                ))
+                let function_id = match &callee.data {
+                    HirExpressionData::Symbol(symbol_id) => {
+                        match self.program.values.get(*symbol_id) {
+                            Some(ComptimeValue::Function(function_id)) => {
+                                *function_id
+                            }
+
+                            _ => {
+                                return Err(Diagnostic::error(
+                                    "Function is unavailable at runtime",
+                                    callee.span,
+                                    "callee must currently be a compile-time-known function",
+                                ));
+                            }
+                        }
+                    }
+
+                    _ => {
+                        return Err(Diagnostic::error(
+                            "Unsupported runtime callee",
+                            callee.span,
+                            "only calls to compile-time-known function bindings are currently supported",
+                        ));
+                    }
+                };
+
+                let llvm_arguments = arguments
+                    .iter()
+                    .map(|argument| {
+                        self.emit_i64_expression(argument)
+                            .map(|operand| format!("i64 {operand}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let llvm_arguments = llvm_arguments.join(", ");
+
+                let function_name = llvm_function_name(function_id);
+                let result = self.fresh_temporary();
+
+                self.instructions.push_str(&format!(
+                    "  {result} = call i64 @{function_name}({llvm_arguments})\n"
+                ));
+
+                Ok(result)
             }
 
             HirExpressionData::Function(_) => {
@@ -97,7 +162,7 @@ impl<'program> FunctionEmitter<'program> {
     }
 
     fn emit_i64_body(
-        &mut self,
+        mut self,
         function: &ComptimeFunction,
     ) -> Result<String, Diagnostic> {
         let [statement] = function.hir.body.statements.as_slice() else {
@@ -118,7 +183,7 @@ impl<'program> FunctionEmitter<'program> {
             }
         }
 
-        Ok(self.instructions.clone())
+        Ok(self.instructions)
     }
 }
 
@@ -126,6 +191,8 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
     let symbols = &program.symbols;
     let functions = &program.functions;
     let values = &program.values;
+
+    let mut diagnostics = Vec::new();
 
     let mut llvm = String::new();
 
@@ -181,28 +248,62 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, Vec<Diagnostic>> {
         todo!("`main` must have no parameters");
     }
 
-    let mut emitter = FunctionEmitter::new(program);
+    for (function_id, function) in functions.iter() {
+        let llvm_parameters = function
+            .hir
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                if parameter.type_ != Type::I64 {
+                    todo!("non-i64 parameters are evil");
+                }
+                format!("i64 %arg{index}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
 
-    let emitted = emitter.emit_i64_body(&main_fn);
-    let Ok(body) = emitted else {
-        let Err(diagnostic) = emitted else { unreachable!() };
+        let emitter = FunctionEmitter::new(program, function);
 
-        return Err(vec![diagnostic]);
-    };
+        let body = emitter.emit_i64_body(function);
+        match body {
+            Err(diagnostic) => {
+                diagnostics.push(diagnostic);
+                continue;
+            }
+            Ok(body) => {
+                let name = llvm_function_name(function_id);
 
-    llvm.push_str("define i64 @flang_main() {\n");
-    llvm.push_str("entry:\n");
-    llvm.push_str(&body);
-    llvm.push_str("}\n\n");
+                let definition = format!(
+                    "define i64 @{name}({llvm_parameters}) {{\n\
+                    entry:\n\
+                    {body}\
+                    }}\n\n"
+                );
 
-    llvm.push_str(
-        "define i32 @main() {\n\
+                llvm.push_str(&definition);
+            }
+        }
+    }
+
+    let main_name = llvm_function_name(*function_id);
+
+    llvm.push_str(&format!(
+        "define i32 @main() {{\n\
         entry:\n\
-          %result = call i64 @flang_main()\n\
+          %result = call i64 @{main_name}()\n\
           %status = trunc i64 %result to i32\n\
           ret i32 %status\n\
-        }\n"
-    );
+        }}\n"
+    ));
 
-    Ok(llvm)
+    if diagnostics.is_empty() {
+        Ok(llvm)
+    } else {
+        Err(diagnostics)
+    }
+}
+
+fn llvm_function_name(function_id: FunctionId) -> String {
+    format!("flang_fn_{}", function_id.index())
 }
