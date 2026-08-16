@@ -213,7 +213,7 @@ impl<'src> Analyzer<'src> {
             }
 
             ExpressionData::Binary { lhs, operator, rhs } => {
-                let expected_type = if operator.is_arithmetic() {
+                let expected_type = if operator.requires_number_operands() {
                     Some(&Type::I64)
                 } else {
                     None
@@ -233,7 +233,7 @@ impl<'src> Analyzer<'src> {
                     return HirExpression::error(expression.span);
                 }
 
-                if *operator == BinaryOperator::Equal
+                if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && !matches!(lhs.type_, Type::I64 | Type::Bool)
                 {
                     self.diagnostics.push(Diagnostic::error(
@@ -245,11 +245,11 @@ impl<'src> Analyzer<'src> {
                 }
 
                 let resulting_type = match operator {
-                    BinaryOperator::Equal 
+                    BinaryOperator::Equal
                     | BinaryOperator::NotEqual
                     | BinaryOperator::GreaterThanOrEqual
-                    | BinaryOperator::GreaterThan 
-                    | BinaryOperator::LessThanOrEqual 
+                    | BinaryOperator::GreaterThan
+                    | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::LessThan => Type::Bool,
 
                     BinaryOperator::Add

@@ -162,48 +162,48 @@ impl<'src> Tokenizer<'src> {
                     self.next();
                     self.next();
                     let end = self.index;
-                    
+
                     return Some(Token {
                         span: self.source.span(start, end),
                         kind: TokenKind::BangEq
                     });
                 }
-                
-                todo!("Negation")
+
+                return None;
             }
-            
+
             '<' => {
                 if self.peek_offset(1) == Some('=') {
                     let start = self.index;
                     self.next();
                     self.next();
                     let end = self.index;
-                    
+
                     return Some(Token {
                         span: self.source.span(start, end),
                         kind: TokenKind::LessThanOrEqual
                     });
                 }
-                
+
                 TokenKind::LessThan
             }
-            
+
             '>' => {
                 if self.peek_offset(1) == Some('=') {
                     let start = self.index;
                     self.next();
                     self.next();
                     let end = self.index;
-                    
+
                     return Some(Token {
                         span: self.source.span(start, end),
                         kind: TokenKind::GreaterThanOrEqual
                     });
                 }
-                
+
                 TokenKind::GreaterThan
             }
-            
+
             _ => return None,
         };
 

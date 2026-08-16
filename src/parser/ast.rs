@@ -72,7 +72,7 @@ pub enum BinaryOperator {
 }
 
 impl BinaryOperator {
-    pub fn is_arithmetic(self) -> bool {
+    pub fn requires_number_operands(self) -> bool {
         matches!(
             self,
             Self::Add | Self::Subtract | Self::Multiply | Self::Divide |
