@@ -1,0 +1,8 @@
+comp add = fn(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+comp main = fn() -> i64 {
+    let answer = add(32, 10);
+    return answer;
+}

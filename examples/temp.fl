@@ -1,0 +1,9 @@
+comp identity = fn(value: i64) -> i64 {
+    return value;
+};
+
+comp answer = 6;
+
+comp main = fn() -> i64 {
+    return answer;
+};

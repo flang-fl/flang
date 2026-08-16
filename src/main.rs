@@ -2,7 +2,7 @@ use crate::comptime::Evaluator;
 use crate::diagnostics::{Diagnostic, PrintDiagnostics};
 use crate::parser::Parser;
 use crate::semantic::Analyzer;
-use crate::source::{SourceFile, SourceFileManager};
+use crate::source::{SourceFile, SourceFileManager, SourceId, Span};
 use crate::tokenizer::Tokenizer;
 use std::path::Path;
 use std::{env, fs};
@@ -15,6 +15,7 @@ mod semantic;
 pub mod source;
 pub mod tokenizer;
 mod toolchain;
+mod llvm_inkwell;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -97,7 +98,19 @@ fn compile(source: &SourceFile) -> Result<String, Vec<Diagnostic>> {
     println!("{evaluated:#?}");
     println!();
 
-    let llvm = llvm::emit(&evaluated)?;
+    // let llvm = llvm::emit(&evaluated)?;
+    let llvm = llvm_inkwell::emit(&evaluated)
+        .map_err(|error| {
+            vec![Diagnostic::error(
+                error,
+                Span {
+                    source: SourceId(0),
+                    start: 0,
+                    end: 0,
+                },
+                ":("
+            )]
+        })?;
     println!("=== LLVM");
     println!("{llvm}");
     println!();
