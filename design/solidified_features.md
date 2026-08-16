@@ -22,6 +22,9 @@ comp main = fn() -> i64 {
 
 # Implemented
 
+## Binary Operators
+`+`, `-`, `*`, `/`, `==`, `!=`, `<=`, `<`, `>`, `>=`
+
 ## Comptime and Runtime function calls
 
 ## Comptime Function Binding
