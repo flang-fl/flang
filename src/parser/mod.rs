@@ -153,6 +153,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         match self.peek() {
             Some(token) => Some(match (token.kind) {
                 TokenKind::EqEq => (BinaryOperator::Equal, PRECEDENCE_EQUALITY),
+                TokenKind::BangEq => (BinaryOperator::NotEqual, PRECEDENCE_EQUALITY),
 
                 // TokenKind::LessEq => (BinaryOperator::LessOrEqual, PRECEDENCE_COMPARISON)
                 

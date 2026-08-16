@@ -118,6 +118,14 @@ impl Evaluator {
                 let rhs = self.evaluate_expression(rhs, symbols);
 
                 match (operator, lhs, rhs) {
+                    (BinaryOperator::NotEqual, ComptimeValue::I64(lhs), ComptimeValue::I64(rhs)) => {
+                        ComptimeValue::Bool(lhs != rhs)
+                    }
+
+                    (BinaryOperator::NotEqual, ComptimeValue::Bool(lhs), ComptimeValue::Bool(rhs)) => {
+                        ComptimeValue::Bool(lhs != rhs)
+                    }
+
                     (BinaryOperator::Equal, ComptimeValue::I64(lhs), ComptimeValue::I64(rhs)) => {
                         ComptimeValue::Bool(lhs == rhs)
                     }

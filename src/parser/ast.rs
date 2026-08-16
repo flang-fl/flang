@@ -63,6 +63,7 @@ pub enum BinaryOperator {
     Divide,
 
     Equal,
+    NotEqual,
 }
 
 impl BinaryOperator {

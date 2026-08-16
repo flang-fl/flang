@@ -156,6 +156,22 @@ impl<'src> Tokenizer<'src> {
                 TokenKind::Eq
             },
 
+            '!' => {
+                if self.peek_offset(1) == Some('=') {
+                    let start = self.index;
+                    self.next();
+                    self.next();
+                    let end = self.index;
+                    
+                    return Some(Token {
+                        span: self.source.span(start, end),
+                        kind: TokenKind::BangEq
+                    });
+                }
+                
+                todo!("Negation")
+            }
+            
             _ => return None,
         };
 
@@ -221,6 +237,7 @@ pub enum TokenKind {
     RCurly,
     LParen,
     RParen,
+    BangEq,
 
     // Special
     Identifier,
