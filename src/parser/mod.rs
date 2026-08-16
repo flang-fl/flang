@@ -155,7 +155,10 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 TokenKind::EqEq => (BinaryOperator::Equal, PRECEDENCE_EQUALITY),
                 TokenKind::BangEq => (BinaryOperator::NotEqual, PRECEDENCE_EQUALITY),
 
-                // TokenKind::LessEq => (BinaryOperator::LessOrEqual, PRECEDENCE_COMPARISON)
+                TokenKind::LessThanOrEqual => (BinaryOperator::LessThanOrEqual, PRECEDENCE_COMPARISON),
+                TokenKind::LessThan => (BinaryOperator::LessThan, PRECEDENCE_COMPARISON),
+                TokenKind::GreaterThanOrEqual => (BinaryOperator::GreaterThanOrEqual, PRECEDENCE_COMPARISON),
+                TokenKind::GreaterThan => (BinaryOperator::GreaterThan, PRECEDENCE_COMPARISON),
                 
                 TokenKind::Plus => (BinaryOperator::Add, PRECEDENCE_ADDITIVE),
                 TokenKind::Minus => (BinaryOperator::Subtract, PRECEDENCE_ADDITIVE),

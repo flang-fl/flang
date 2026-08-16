@@ -245,7 +245,12 @@ impl<'src> Analyzer<'src> {
                 }
 
                 let resulting_type = match operator {
-                    BinaryOperator::Equal | BinaryOperator::NotEqual => Type::Bool,
+                    BinaryOperator::Equal 
+                    | BinaryOperator::NotEqual
+                    | BinaryOperator::GreaterThanOrEqual
+                    | BinaryOperator::GreaterThan 
+                    | BinaryOperator::LessThanOrEqual 
+                    | BinaryOperator::LessThan => Type::Bool,
 
                     BinaryOperator::Add
                     | BinaryOperator::Subtract

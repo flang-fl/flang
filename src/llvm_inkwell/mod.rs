@@ -282,6 +282,42 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 let rhs = self.emit_expression(rhs, operands)?;
 
                 let result = match operator {
+                    BinaryOperator::LessThanOrEqual => {
+                        self.builder.build_int_compare(
+                            IntPredicate::SLE,
+                            lhs,
+                            rhs,
+                            "sletmp"
+                        )
+                    }
+                    
+                    BinaryOperator::LessThan => {
+                        self.builder.build_int_compare(
+                            IntPredicate::SLT,
+                            lhs,
+                            rhs,
+                            "slttmp"
+                        )
+                    }
+                    
+                    BinaryOperator::GreaterThanOrEqual => {
+                        self.builder.build_int_compare(
+                            IntPredicate::SGE,
+                            lhs,
+                            rhs,
+                            "sgetmp"
+                        )
+                    }
+                    
+                    BinaryOperator::GreaterThan => {
+                        self.builder.build_int_compare(
+                            IntPredicate::SGT,
+                            lhs,
+                            rhs,
+                            "sgttmp"
+                        )
+                    }
+                    
                     BinaryOperator::NotEqual => {
                         self.builder.build_int_compare(
                             IntPredicate::NE,

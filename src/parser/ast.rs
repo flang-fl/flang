@@ -64,13 +64,19 @@ pub enum BinaryOperator {
 
     Equal,
     NotEqual,
+
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 }
 
 impl BinaryOperator {
     pub fn is_arithmetic(self) -> bool {
         matches!(
             self,
-            Self::Add | Self::Subtract | Self::Multiply | Self::Divide
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide |
+            Self::LessThanOrEqual | Self::GreaterThanOrEqual | Self::LessThan | Self::GreaterThan
         )
     }
 }

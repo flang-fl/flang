@@ -172,6 +172,38 @@ impl<'src> Tokenizer<'src> {
                 todo!("Negation")
             }
             
+            '<' => {
+                if self.peek_offset(1) == Some('=') {
+                    let start = self.index;
+                    self.next();
+                    self.next();
+                    let end = self.index;
+                    
+                    return Some(Token {
+                        span: self.source.span(start, end),
+                        kind: TokenKind::LessThanOrEqual
+                    });
+                }
+                
+                TokenKind::LessThan
+            }
+            
+            '>' => {
+                if self.peek_offset(1) == Some('=') {
+                    let start = self.index;
+                    self.next();
+                    self.next();
+                    let end = self.index;
+                    
+                    return Some(Token {
+                        span: self.source.span(start, end),
+                        kind: TokenKind::GreaterThanOrEqual
+                    });
+                }
+                
+                TokenKind::GreaterThan
+            }
+            
             _ => return None,
         };
 
@@ -238,6 +270,10 @@ pub enum TokenKind {
     LParen,
     RParen,
     BangEq,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 
     // Special
     Identifier,
