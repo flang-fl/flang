@@ -331,14 +331,44 @@ impl Evaluator {
             return ComptimeValue::Error;
         };
 
-        match &statement.data {
-            HirStatementData::Return(Some(expression)) => {
-                self.evaluate_expression(expression, symbols)
-            }
+        for statement in function.body.statements.iter() {
+            match &statement.data {
+                HirStatementData::Binding {
+                    symbol,
+                    expression
+                } => {
+                    let value = self.evaluate_expression(expression, symbols);
+                    if value == ComptimeValue::Error {
+                        return ComptimeValue::Error;
+                    }
 
-            HirStatementData::Return(None) => {
-                ComptimeValue::Unit
+                    let frame = self.frames
+                        .last_mut()
+                        .expect("function evaluation requires a stack frame");
+
+                    frame.insert(*symbol, value);
+                }
+
+                HirStatementData::Return(Some(expression)) => {
+                    return self.evaluate_expression(expression, symbols);
+                }
+
+                HirStatementData::Return(None) => {
+                    return ComptimeValue::Unit;
+                }
             }
+        }
+
+        if function.return_type == Type::Unit {
+            ComptimeValue::Unit
+        } else {
+            self.diagnostics.push(Diagnostic::error(
+                "Function is missing a return statement",
+                function.body.span,
+                "no return :("
+            ));
+
+            ComptimeValue::Error
         }
     }
 }

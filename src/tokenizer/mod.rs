@@ -86,6 +86,7 @@ impl<'src> Tokenizer<'src> {
     fn keyword(identifier: &str) -> Option<TokenKind> {
         match identifier {
             "fn" => Some(TokenKind::Fn),
+            "let" => Some(TokenKind::Let),
             "comp" => Some(TokenKind::Comp),
             "return" => Some(TokenKind::Return),
 
@@ -183,6 +184,7 @@ pub struct Token {
 pub enum TokenKind {
     // Keywords
     Fn,
+    Let,
     Comp,
     Return,
 

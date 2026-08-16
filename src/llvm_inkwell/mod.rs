@@ -217,31 +217,36 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             operands.insert(parameter.symbol, llvm_parameter);
         }
 
-        let [statement] = function.hir.body.statements.as_slice() else {
-            return Err(
-                "Inkwell backend currently requires exactly one return statement"
-                    .to_owned()
-            );
-        };
+        for statement in function.hir.body.statements.iter() {
+            match &statement.data {
+                HirStatementData::Binding {
+                    symbol,
+                    expression
+                } => {
+                    let value = self.emit_i64_expression(expression, &operands)?;
+                    operands.insert(*symbol, value);
+                },
 
-        match &statement.data {
-            HirStatementData::Return(Some(expression)) => {
-                let value = self.emit_i64_expression(expression, &operands)?;
+                HirStatementData::Return(Some(expression)) => {
+                    let value = self.emit_i64_expression(expression, &operands)?;
 
-                self.builder
-                    .build_return(Some(&value))
-                    .map_err(|error| error.to_string())?;
-            }
+                    self.builder
+                        .build_return(Some(&value))
+                        .map_err(|error| error.to_string())?;
+                    
+                    return Ok(());
+                }
 
-            HirStatementData::Return(None) => {
-                return Err(
-                    "i64 function cannot return without a value"
-                        .to_owned()
-                )
+                HirStatementData::Return(None) => {
+                    return Err(
+                        "i64 function cannot return without a value"
+                            .to_owned()
+                    )
+                }
             }
         }
 
-        Ok(())
+        Err("Function body without a return".to_owned())
     }
 
     fn emit_i64_expression(

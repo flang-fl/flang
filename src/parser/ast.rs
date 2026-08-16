@@ -102,4 +102,5 @@ pub struct Statement {
 #[derive(Debug, Clone)]
 pub enum StatementData {
     Return(Option<Expression>),
+    Binding(Binding),
 }

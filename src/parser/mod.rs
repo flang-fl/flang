@@ -1,7 +1,7 @@
 use std::cmp::min;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Parameter, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::parser::ast::{BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
 use crate::source::SourceFile;
 use crate::tokenizer::{Token, TokenKind};
 
@@ -268,7 +268,33 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_statement(&mut self) -> Option<Statement> {
-        if self.peek_is(TokenKind::Return) {
+        if self.peek_is(TokenKind::Let) {
+            let let_ = self.expect(TokenKind::Let, "Expected let")?;
+            let name = self.expect(
+                TokenKind::Identifier,
+                "Expected binding name after `let`"
+            )?;
+
+            self.expect(TokenKind::Eq, "Expected `=` after binding name")?;
+
+            let expression = self.parse_expression()?;
+
+            let semi = self.expect(
+                TokenKind::Semi,
+                "Expected `;` after local binding"
+            )?;
+
+            Some(Statement {
+                span: self.source.fromto(let_.span, semi.span),
+                data: StatementData::Binding(Binding {
+                    phase: Phase::Runtime,
+                    mutable: false, // todo
+                    name: name.span,
+                    type_annotation: None, // todo
+                    expression,
+                }),
+            })
+        } else if self.peek_is(TokenKind::Return) {
             let return_ = self.expect(TokenKind::Return, "Expected `return`")?;
 
             let (expression, span) = if self.peek_is(TokenKind::Semi) {
@@ -280,13 +306,13 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 (Some(expression), self.source.fromto(return_.span, semi.span))
             };
 
-            return Some(Statement {
+            Some(Statement {
                 span,
                 data: StatementData::Return(expression)
             })
+        } else {
+            None
         }
-
-        None
     }
 
     // Utilities

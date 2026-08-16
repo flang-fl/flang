@@ -36,6 +36,12 @@ impl Environment {
                     scope.get(name).copied()
             )
     }
+
+    pub fn lookup_current(&self, name: &str) -> Option<SymbolId> {
+        self.scopes
+            .last()
+            .and_then(|scope| scope.get(name).copied())
+    }
 }
 
 #[derive(Debug)]

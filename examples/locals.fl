@@ -1,8 +1,8 @@
-comp add = fn(a: i64, b: i64) -> i64 {
-    return a + b;
-}
+comp add_two = fn(value: i64) -> i64 {
+    let answer = value + 2;
+    return answer;
+};
 
 comp main = fn() -> i64 {
-    let answer = add(32, 10);
-    return answer;
-}
+    return add_two(40);
+};

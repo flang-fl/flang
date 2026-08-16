@@ -92,4 +92,8 @@ pub struct HirStatement {
 #[derive(Debug, Clone)]
 pub enum HirStatementData {
     Return(Option<HirExpression>),
+    Binding {
+        symbol: SymbolId,
+        expression: HirExpression,
+    }
 }

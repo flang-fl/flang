@@ -9,7 +9,6 @@ use std::{env, fs};
 
 mod comptime;
 pub mod diagnostics;
-mod llvm;
 mod parser;
 mod semantic;
 pub mod source;

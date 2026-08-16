@@ -479,13 +479,13 @@ impl<'src> Analyzer<'src> {
     ) -> HirBlock {
         self.environment.push_scope();
 
-        let statements = block
-            .statements
-            .iter()
-            .map(|statement| {
+        let mut statements = Vec::new();
+
+        for statement in &block.statements {
+            statements.push(
                 self.analyze_statement(statement, return_type)
-            })
-            .collect();
+            );
+        }
 
         self.environment.pop_scope();
 
@@ -497,6 +497,63 @@ impl<'src> Analyzer<'src> {
 
     fn analyze_statement(&mut self, statement: &Statement, return_type: &Type) -> HirStatement {
         match &statement.data {
+            StatementData::Binding(binding) => {
+                let name = self
+                    .source
+                    .span_text(binding.name)
+                    .to_owned();
+
+                let annotated_type = binding
+                    .type_annotation
+                    .as_ref()
+                    .map(|annotation| {
+                        self.resolve_type_expression(annotation)
+                    });
+
+                let expression = self.analyze_expression(
+                    &binding.expression,
+                    annotated_type.as_ref()
+                );
+
+                if let Some(previous_id) =
+                    self.environment.lookup_current(&name)
+                {
+                    let previous = self.symbols.get(previous_id);
+
+                    self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                        "Duplicate local binding",
+                        binding.name,
+                        "duplicate binding",
+                        previous
+                            .declaration_span
+                            .map(|span| {
+                                vec![Label {
+                                    span,
+                                    text: "previously defined here".to_owned()
+                                }]
+                            })
+                            .unwrap_or_default()
+                    ))
+                }
+
+                let symbol_id = self.symbols.insert(Symbol {
+                    name: name.clone(),
+                    declaration_span: Some(binding.name),
+                    kind: SymbolKind::Local,
+                    type_: expression.type_.clone()
+                });
+
+                self.environment.define(name, symbol_id);
+
+                HirStatement {
+                    span: statement.span,
+                    data: HirStatementData::Binding {
+                        symbol: symbol_id,
+                        expression
+                    }
+                }
+            }
+
             StatementData::Return(expression) => {
                 let Some(expression) = expression else {
                     return if *return_type == Type::Unit {
