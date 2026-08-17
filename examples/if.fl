@@ -1,0 +1,15 @@
+comp choose = fn(value: i64) -> i64 {
+    if value < 0 {
+        return 1;
+    } else if value == 0 {
+        return 2;
+    } else {
+        return 3;
+    }
+};
+
+comp answer = choose(0);
+
+comp main = fn() -> i64 {
+    return choose(answer - 3);
+};

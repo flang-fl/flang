@@ -1,10 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{
-    BinaryOperator, Binding, Block, Expression, ExpressionData, FunctionExpression, Item, ItemData,
-    Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData,
-};
-use crate::source::SourceFile;
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
 use std::cmp::min;
 
@@ -155,11 +152,15 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 TokenKind::EqEq => (BinaryOperator::Equal, PRECEDENCE_EQUALITY),
                 TokenKind::BangEq => (BinaryOperator::NotEqual, PRECEDENCE_EQUALITY),
 
-                TokenKind::LessThanOrEqual => (BinaryOperator::LessThanOrEqual, PRECEDENCE_COMPARISON),
+                TokenKind::LessThanOrEqual => {
+                    (BinaryOperator::LessThanOrEqual, PRECEDENCE_COMPARISON)
+                }
                 TokenKind::LessThan => (BinaryOperator::LessThan, PRECEDENCE_COMPARISON),
-                TokenKind::GreaterThanOrEqual => (BinaryOperator::GreaterThanOrEqual, PRECEDENCE_COMPARISON),
+                TokenKind::GreaterThanOrEqual => {
+                    (BinaryOperator::GreaterThanOrEqual, PRECEDENCE_COMPARISON)
+                }
                 TokenKind::GreaterThan => (BinaryOperator::GreaterThan, PRECEDENCE_COMPARISON),
-                
+
                 TokenKind::Plus => (BinaryOperator::Add, PRECEDENCE_ADDITIVE),
                 TokenKind::Minus => (BinaryOperator::Subtract, PRECEDENCE_ADDITIVE),
                 TokenKind::Star => (BinaryOperator::Multiply, PRECEDENCE_MULTIPLICATIVE),
@@ -332,9 +333,48 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 span,
                 data: StatementData::Return(expression),
             })
+        } else if self.peek_is(TokenKind::If) {
+            self.parse_if()
         } else {
             None
         }
+    }
+
+    fn parse_if(&mut self) -> Option<Statement> {
+        let if_ = self.expect(TokenKind::If, "Expected `if`")?;
+
+        let condition = self.parse_expression()?;
+        let body = self.parse_body()?;
+
+        let (else_if, end_span): (Option<ElseBranch>, Span) = if self.peek_is(TokenKind::Else) {
+            self.expect(TokenKind::Else, "Expected `else`")?;
+            if self.peek_is(TokenKind::If) {
+                let else_if = self.parse_if()?;
+                let span = else_if.span;
+                (
+                    Some(ElseBranch::ElseIf(Box::new(else_if))),
+                    span,
+                )
+            } else {
+                let body = self.parse_body()?;
+                let span = body.span;
+                (
+                    Some(ElseBranch::Else(body)),
+                    span,
+                )
+            }
+        } else {
+            (None, body.span)
+        };
+
+        Some(Statement {
+            span: self.source.fromto(if_.span, end_span),
+            data: StatementData::If(If {
+                condition,
+                then_block: body,
+                else_: else_if,
+            })
+        })
     }
 
     // Utilities

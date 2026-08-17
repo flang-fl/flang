@@ -1,12 +1,6 @@
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{
-    BinaryOperator, Binding, Block, Expression, ExpressionData, Item, ItemData, Program, Statement,
-    StatementData, TypeExpression, TypeExpressionData,
-};
-use crate::semantic::hir::{
-    HirBinding, HirBlock, HirExpression, HirExpressionData, HirFunctionExpression, HirParameter,
-    HirProgram, HirStatement, HirStatementData,
-};
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, If, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::semantic::hir::{HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirParameter, HirProgram, HirStatement, HirStatementData};
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
 use crate::source::{SourceFile, Span};
@@ -531,6 +525,41 @@ impl<'src> Analyzer<'src> {
 
     fn analyze_statement(&mut self, statement: &Statement, return_type: &Type) -> HirStatement {
         match &statement.data {
+            StatementData::If(If {
+                condition,
+                then_block,
+                else_,
+            }) => {
+                let condition = self.analyze_expression(
+                    condition,
+                    Some(&Type::Bool)
+                );
+
+                let then_block = self.analyze_block(then_block, return_type);
+
+                let else_branch = match else_ {
+                    None => None,
+                    Some(ElseBranch::Else(block)) => {
+                        Some(HirElseBranch::Else(self.analyze_block(block, return_type)))
+                    }
+                    Some(ElseBranch::ElseIf(statement)) => {
+                        let hir_statement =
+                            self.analyze_statement(statement.as_ref(), return_type);
+
+                        Some(HirElseBranch::ElseIf(Box::new(hir_statement)))
+                    }
+                };
+
+                HirStatement {
+                    span: statement.span,
+                    data: HirStatementData::If {
+                        condition,
+                        then_block,
+                        else_branch,
+                    }
+                }
+            },
+
             StatementData::Binding(binding) => {
                 let name = self.source.span_text(binding.name).to_owned();
 

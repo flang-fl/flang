@@ -5,7 +5,7 @@ use crate::source::Span;
 
 #[derive(Debug, Clone)]
 pub struct HirProgram {
-    pub bindings: Vec<HirBinding>
+    pub bindings: Vec<HirBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,7 +25,7 @@ pub struct HirBinding {
     pub phase: Phase,
     pub mutable: bool,
     pub expression: HirExpression,
-    pub span: Span
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ impl HirExpression {
         Self {
             type_: Type::Error,
             data: HirExpressionData::Error,
-            span
+            span,
         }
     }
 }
@@ -64,6 +64,12 @@ pub enum HirExpressionData {
 }
 
 #[derive(Debug, Clone)]
+pub enum HirElseBranch {
+    ElseIf(Box<HirStatement>),
+    Else(HirBlock),
+}
+
+#[derive(Debug, Clone)]
 pub struct HirFunctionExpression {
     pub parameters: Vec<HirParameter>,
     pub return_type: Type,
@@ -81,7 +87,7 @@ pub struct HirParameter {
 #[derive(Debug, Clone)]
 pub struct HirBlock {
     pub statements: Vec<HirStatement>,
-    pub span: Span
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -96,5 +102,10 @@ pub enum HirStatementData {
     Binding {
         symbol: SymbolId,
         expression: HirExpression,
-    }
+    },
+    If {
+        condition: HirExpression,
+        then_block: HirBlock,
+        else_branch: Option<HirElseBranch>,
+    },
 }

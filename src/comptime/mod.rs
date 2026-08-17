@@ -1,9 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::{BinaryOperator, Phase};
 use crate::semantic::SemanticProgram;
-use crate::semantic::hir::{
-    HirExpression, HirExpressionData, HirFunctionExpression, HirProgram, HirStatementData,
-};
+use crate::semantic::hir::{HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirProgram, HirStatement, HirStatementData};
 use crate::semantic::symbols::{SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
 use std::cmp::PartialEq;
@@ -32,6 +30,12 @@ pub struct Evaluator {
     functions: FunctionStore,
     frames: Vec<HashMap<SymbolId, ComptimeValue>>,
     diagnostics: Vec<Diagnostic>,
+}
+
+enum EvaluationFlow {
+    Continue,
+    Return(ComptimeValue),
+    Error,
 }
 
 impl Evaluator {
@@ -93,6 +97,85 @@ impl Evaluator {
         } else {
             Err(self.diagnostics)
         }
+    }
+
+    fn evaluate_statement(
+        &mut self,
+        statement: &HirStatement,
+        symbols: &SymbolTable,
+    ) -> EvaluationFlow {
+        match &statement.data {
+            HirStatementData::Binding { symbol, expression } => {
+                let value = self.evaluate_expression(expression, symbols);
+                if value == ComptimeValue::Error {
+                    return EvaluationFlow::Error;
+                }
+
+                let frame = self
+                    .frames
+                    .last_mut()
+                    .expect("function evaluation requires a stack frame");
+
+                frame.insert(*symbol, value);
+                EvaluationFlow::Continue
+            }
+
+            HirStatementData::Return(Some(expression)) => {
+                EvaluationFlow::Return(self.evaluate_expression(expression, symbols))
+            }
+
+            HirStatementData::Return(None) => {
+                EvaluationFlow::Return(ComptimeValue::Unit)
+            },
+
+            HirStatementData::If {
+                condition,
+                then_block,
+                else_branch
+            } => {
+                let condition = self.evaluate_expression(condition, symbols);
+
+                match condition {
+                    ComptimeValue::Bool(true) => {
+                        self.evaluate_block(then_block, symbols)
+                    }
+                    ComptimeValue::Bool(false) => {
+                        match else_branch {
+                            Some(HirElseBranch::Else(block)) => {
+                                self.evaluate_block(block, symbols)
+                            }
+                            Some(HirElseBranch::ElseIf(statement)) => {
+                                self.evaluate_statement(statement, symbols)
+                            }
+
+                            None => EvaluationFlow::Continue,
+                        }
+                    }
+
+                    ComptimeValue::Error => EvaluationFlow::Error,
+
+                    _ => {
+                        // Semantic invariant was violated
+                        EvaluationFlow::Error
+                    }
+                }
+            }
+        }
+    }
+
+    fn evaluate_block(
+        &mut self,
+        block: &HirBlock,
+        symbols: &SymbolTable,
+    ) -> EvaluationFlow {
+        for statement in block.statements.iter() {
+            match self.evaluate_statement(statement, symbols) {
+                EvaluationFlow::Continue => {}
+                flow => return flow,
+            }
+        }
+
+        EvaluationFlow::Continue
     }
 
     fn evaluate_expression(
@@ -358,39 +441,16 @@ impl Evaluator {
         function: &HirFunctionExpression,
         symbols: &SymbolTable,
     ) -> ComptimeValue {
-        let Some(statement) = function.body.statements.first() else {
-            self.diagnostics.push(Diagnostic::error(
-                "Function is missing a return statement",
-                function.body.span,
-                ":(",
-            ));
-
-            return ComptimeValue::Error;
-        };
-
         for statement in function.body.statements.iter() {
-            match &statement.data {
-                HirStatementData::Binding { symbol, expression } => {
-                    let value = self.evaluate_expression(expression, symbols);
-                    if value == ComptimeValue::Error {
-                        return ComptimeValue::Error;
-                    }
+            let flow = self.evaluate_statement(
+                statement,
+                symbols,
+            );
 
-                    let frame = self
-                        .frames
-                        .last_mut()
-                        .expect("function evaluation requires a stack frame");
-
-                    frame.insert(*symbol, value);
-                }
-
-                HirStatementData::Return(Some(expression)) => {
-                    return self.evaluate_expression(expression, symbols);
-                }
-
-                HirStatementData::Return(None) => {
-                    return ComptimeValue::Unit;
-                }
+            match flow {
+                EvaluationFlow::Continue => continue,
+                EvaluationFlow::Return(value) => return value,
+                EvaluationFlow::Error => return ComptimeValue::Error,
             }
         }
 

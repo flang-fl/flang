@@ -123,4 +123,18 @@ pub struct Statement {
 pub enum StatementData {
     Return(Option<Expression>),
     Binding(Binding),
+    If(If)
+}
+
+#[derive(Debug, Clone)]
+pub struct If {
+    pub(crate) condition: Expression,
+    pub(crate) then_block: Block,
+    pub(crate) else_: Option<ElseBranch>
+}
+
+#[derive(Debug, Clone)]
+pub enum ElseBranch {
+    ElseIf(Box<Statement>),
+    Else(Block),
 }
