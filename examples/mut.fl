@@ -1,0 +1,13 @@
+comp choose = fn(condition: bool) -> i64 {
+    let mut result = 7;
+
+    if condition {
+        result = 42;
+    }
+
+    return result;
+};
+
+comp main = fn() -> i64 {
+    return choose(true);
+};

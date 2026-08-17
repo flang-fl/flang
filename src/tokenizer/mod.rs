@@ -84,18 +84,19 @@ impl<'src> Tokenizer<'src> {
     }
 
     fn keyword(identifier: &str) -> Option<TokenKind> {
-        match identifier {
-            "fn" => Some(TokenKind::Fn),
-            "if" => Some(TokenKind::If),
-            "let" => Some(TokenKind::Let),
-            "else" => Some(TokenKind::Else),
-            "comp" => Some(TokenKind::Comp),
-            "true" => Some(TokenKind::True),
-            "false" => Some(TokenKind::False),
-            "return" => Some(TokenKind::Return),
+        Some(match identifier {
+            "fn" => TokenKind::Fn,
+            "if" => TokenKind::If,
+            "let" => TokenKind::Let,
+            "mut" => TokenKind::Mut,
+            "else" => TokenKind::Else,
+            "comp" => TokenKind::Comp,
+            "true" => TokenKind::True,
+            "false" => TokenKind::False,
+            "return" => TokenKind::Return,
 
-            _ => None,
-        }
+            _ => return None,
+        })
     }
 
     fn tokenize_number_literal(&mut self) -> Result<Token, Diagnostic> {
@@ -252,6 +253,7 @@ pub enum TokenKind {
     Fn,
     If,
     Let,
+    Mut,
     Else,
     Comp,
     True,

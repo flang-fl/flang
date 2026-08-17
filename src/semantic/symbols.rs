@@ -99,5 +99,7 @@ pub enum SymbolKind {
         mutable: bool,
     },
     Parameter,
-    Local,
+    Local {
+        mutable: bool,
+    },
 }

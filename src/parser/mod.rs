@@ -293,54 +293,85 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         })
     }
 
-    fn parse_statement(&mut self) -> Option<Statement> {
-        if self.peek_is(TokenKind::Let) {
-            let let_ = self.expect(TokenKind::Let, "Expected let")?;
-            let name = self.expect(TokenKind::Identifier, "Expected binding name after `let`")?;
+    fn parse_let_statement(&mut self) -> Option<Statement> {
+        let let_ = self.expect(TokenKind::Let, "Expected let")?;
 
-            self.expect(TokenKind::Eq, "Expected `=` after binding name")?;
-
-            let expression = self.parse_expression()?;
-
-            let semi = self.expect(TokenKind::Semi, "Expected `;` after local binding")?;
-
-            Some(Statement {
-                span: self.source.fromto(let_.span, semi.span),
-                data: StatementData::Binding(Binding {
-                    phase: Phase::Runtime,
-                    mutable: false, // todo
-                    name: name.span,
-                    type_annotation: None, // todo
-                    expression,
-                }),
-            })
-        } else if self.peek_is(TokenKind::Return) {
-            let return_ = self.expect(TokenKind::Return, "Expected `return`")?;
-
-            let (expression, span) = if self.peek_is(TokenKind::Semi) {
-                let semi = self.expect(TokenKind::Semi, "Expected `;`")?;
-                (None, self.source.fromto(return_.span, semi.span))
-            } else {
-                let expression = self.parse_expression()?;
-                let semi = self.expect(TokenKind::Semi, "Expected `;`")?;
-                (
-                    Some(expression),
-                    self.source.fromto(return_.span, semi.span),
-                )
-            };
-
-            Some(Statement {
-                span,
-                data: StatementData::Return(expression),
-            })
-        } else if self.peek_is(TokenKind::If) {
-            self.parse_if()
+        let mutable = if self.peek_is(TokenKind::Mut) {
+            self.expect(TokenKind::Mut, "Expected `mut`")?;
+            true
         } else {
-            None
+            false
+        };
+
+        let name = self.expect(TokenKind::Identifier, "Expected binding name after `let`")?;
+
+        self.expect(TokenKind::Eq, "Expected `=` after binding name")?;
+
+        let expression = self.parse_expression()?;
+
+        let semi = self.expect(TokenKind::Semi, "Expected `;` after local binding")?;
+
+        Some(Statement {
+            span: self.source.fromto(let_.span, semi.span),
+            data: StatementData::Binding(Binding {
+                phase: Phase::Runtime,
+                mutable,
+                name: name.span,
+                type_annotation: None, // todo
+                expression,
+            }),
+        })
+    }
+
+    fn parse_return_statement(&mut self) -> Option<Statement> {
+        let return_ = self.expect(TokenKind::Return, "Expected `return`")?;
+
+        let (expression, span) = if self.peek_is(TokenKind::Semi) {
+            let semi = self.expect(TokenKind::Semi, "Expected `;`")?;
+            (None, self.source.fromto(return_.span, semi.span))
+        } else {
+            let expression = self.parse_expression()?;
+            let semi = self.expect(TokenKind::Semi, "Expected `;`")?;
+            (
+                Some(expression),
+                self.source.fromto(return_.span, semi.span),
+            )
+        };
+
+        Some(Statement {
+            span,
+            data: StatementData::Return(expression),
+        })
+    }
+
+    fn parse_statement(&mut self) -> Option<Statement> {
+        match self.peek().map(|token| token.kind) {
+            Some(TokenKind::Let) => self.parse_let_statement(),
+            Some(TokenKind::Return) => self.parse_return_statement(),
+            Some(TokenKind::If) => self.parse_if_statement(),
+            Some(TokenKind::Identifier) => {
+                let identifier = self.expect(TokenKind::Identifier, "Expected identifier")?;
+
+                let _ = self.expect(TokenKind::Eq, "Expected `=` for assignment")?;
+
+                let expression = self.parse_expression()?;
+
+                let semi = self.expect(TokenKind::Semi, "Expected `;` after assignment")?;
+
+                Some(Statement {
+                    span: self.source.fromto(identifier.span, semi.span),
+                    data: StatementData::Assignment {
+                        target: identifier.span,
+                        expression,
+                    }
+                })
+            }
+
+            _ => None,
         }
     }
 
-    fn parse_if(&mut self) -> Option<Statement> {
+    fn parse_if_statement(&mut self) -> Option<Statement> {
         let if_ = self.expect(TokenKind::If, "Expected `if`")?;
 
         let condition = self.parse_expression()?;
@@ -349,7 +380,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let (else_if, end_span): (Option<ElseBranch>, Span) = if self.peek_is(TokenKind::Else) {
             self.expect(TokenKind::Else, "Expected `else`")?;
             if self.peek_is(TokenKind::If) {
-                let else_if = self.parse_if()?;
+                let else_if = self.parse_if_statement()?;
                 let span = else_if.span;
                 (
                     Some(ElseBranch::ElseIf(Box::new(else_if))),

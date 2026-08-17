@@ -96,6 +96,15 @@ pub struct HirStatement {
     pub data: HirStatementData,
 }
 
+impl HirStatement {
+    pub fn error(span: Span) -> Self {
+        Self {
+            span,
+            data: HirStatementData::Error,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum HirStatementData {
     Return(Option<HirExpression>),
@@ -108,4 +117,9 @@ pub enum HirStatementData {
         then_block: HirBlock,
         else_branch: Option<HirElseBranch>,
     },
+    Assignment {
+        symbol: SymbolId,
+        expression: HirExpression,
+    },
+    Error,
 }

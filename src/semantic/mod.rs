@@ -525,6 +525,54 @@ impl<'src> Analyzer<'src> {
 
     fn analyze_statement(&mut self, statement: &Statement, return_type: &Type) -> HirStatement {
         match &statement.data {
+            StatementData::Assignment {
+                target,
+                expression,
+            } => {
+                let name = self.source.span_text(*target);
+                
+                let Some(symbol_id) = self.environment.lookup(name) else {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Unknown assignment target",
+                        *target,
+                        format!("`{name}` is not defined")
+                    ));
+                    
+                    return HirStatement::error(*target);
+                };
+                
+                let (target_type, mutable) = {
+                    let symbol = self.symbols.get(symbol_id);
+                    
+                    let mutable = matches!(
+                        symbol.kind,
+                        SymbolKind::Local { mutable: true }
+                    );
+
+                    (symbol.type_.clone(), mutable)
+                };
+                
+                let expression = self.analyze_expression(expression, Some(&target_type));
+                
+                if !mutable {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Cannot assign to immutable binding",
+                        *target,
+                        format!("`{name}` is not mutable")
+                    ));
+                    
+                    return HirStatement::error(statement.span);
+                }
+                
+                HirStatement {
+                    span: statement.span,
+                    data: HirStatementData::Assignment {
+                        symbol: symbol_id,
+                        expression,
+                    }
+                }
+            }
+
             StatementData::If(If {
                 condition,
                 then_block,
@@ -593,7 +641,9 @@ impl<'src> Analyzer<'src> {
                 let symbol_id = self.symbols.insert(Symbol {
                     name: name.clone(),
                     declaration_span: Some(binding.name),
-                    kind: SymbolKind::Local,
+                    kind: SymbolKind::Local {
+                        mutable: binding.mutable,
+                    },
                     type_: expression.type_.clone(),
                 });
 

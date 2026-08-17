@@ -1,14 +1,16 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue, EvaluatedProgram, FunctionId};
 use crate::parser::ast::BinaryOperator;
-use crate::semantic::hir::{HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirStatement, HirStatementData};
-use crate::semantic::symbols::SymbolId;
+use crate::semantic::hir::{
+    HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirStatement, HirStatementData,
+};
+use crate::semantic::symbols::{SymbolId, SymbolKind};
 use crate::semantic::types::Type;
 use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::IntType;
-use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, Operand};
+use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
 use std::collections::HashMap;
 
 pub fn emit(program: &EvaluatedProgram) -> Result<String, String> {
@@ -25,6 +27,14 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, String> {
         .map_err(|message| message.to_string())?;
 
     Ok(generator.module.print_to_string().to_string())
+}
+
+type Operands<'ctx> = HashMap<SymbolId, LocalOperand<'ctx>>;
+
+#[derive(Clone, Copy)]
+enum LocalOperand<'ctx> {
+    Value(IntValue<'ctx>),
+    Mutable(PointerValue<'ctx>),
 }
 
 pub struct CodeGenerator<'ctx, 'program> {
@@ -160,7 +170,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
         self.builder.position_at_end(entry);
 
-        let mut operands = HashMap::<SymbolId, IntValue<'ctx>>::new();
+        let mut operands = Operands::<'ctx>::new();
 
         for (index, (parameter, llvm_parameter)) in function
             .hir
@@ -172,7 +182,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             let llvm_parameter = llvm_parameter.into_int_value();
             llvm_parameter.set_name(&format!("arg{index}"));
 
-            operands.insert(parameter.symbol, llvm_parameter);
+            operands.insert(parameter.symbol, LocalOperand::Value(llvm_parameter));
         }
 
         let flow = self.emit_block(&function.hir.body, &mut operands)?;
@@ -186,7 +196,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     fn emit_block(
         &mut self,
         block: &HirBlock,
-        operands: &mut HashMap<SymbolId, IntValue<'ctx>>,
+        operands: &mut Operands<'ctx>,
     ) -> Result<EmitFlow, String> {
         for statement in block.statements.iter() {
             let flow = self.emit_statement(statement, operands)?;
@@ -202,9 +212,25 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     fn emit_statement(
         &mut self,
         statement: &HirStatement,
-        operands: &mut HashMap<SymbolId, IntValue<'ctx>>,
+        operands: &mut Operands<'ctx>,
     ) -> Result<EmitFlow, String> {
         match &statement.data {
+            HirStatementData::Error => Err("Evil".to_owned()),
+
+            HirStatementData::Assignment { symbol, expression } => {
+                let value = self.emit_expression(expression, operands)?;
+
+                let Some(LocalOperand::Mutable(pointer)) = operands.get(symbol) else {
+                    return Err("assignment target is not a mutable LLVM local".to_owned());
+                };
+
+                self.builder
+                    .build_store(*pointer, value)
+                    .map_err(|error| error.to_string())?;
+
+                Ok(EmitFlow::Continues)
+            }
+
             HirStatementData::If {
                 condition,
                 then_block,
@@ -255,7 +281,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                         self.emit_statement(statement, &mut else_operands)?
                     }
 
-                    None => EmitFlow::Continues
+                    None => EmitFlow::Continues,
                 };
 
                 let else_continues = matches!(else_flow, EmitFlow::Continues);
@@ -285,7 +311,27 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
             HirStatementData::Binding { symbol, expression } => {
                 let value = self.emit_expression(expression, &operands)?;
-                operands.insert(*symbol, value);
+                let symbol_info = self.program.symbols.get(*symbol);
+
+                match &symbol_info.kind {
+                    SymbolKind::Local { mutable: true } => {
+                        let pointer = self
+                            .builder
+                            .build_alloca(value.get_type(), &symbol_info.name)
+                            .map_err(|error| error.to_string())?;
+
+                        self.builder
+                            .build_store(pointer, value)
+                            .map_err(|error| error.to_string())?;
+
+                        operands.insert(*symbol, LocalOperand::Mutable(pointer));
+                    }
+
+                    _ => {
+                        operands.insert(*symbol, LocalOperand::Value(value));
+                    }
+                }
+
                 Ok(EmitFlow::Continues)
             }
 
@@ -308,7 +354,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     fn emit_expression(
         &self,
         expression: &HirExpression,
-        operands: &HashMap<SymbolId, IntValue<'ctx>>,
+        operands: &Operands<'ctx>,
     ) -> Result<IntValue<'ctx>, String> {
         match &expression.data {
             HirExpressionData::Integer(value) => {
@@ -316,8 +362,27 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirExpressionData::Symbol(symbol_id) => {
-                if let Some(value) = operands.get(symbol_id) {
-                    return Ok(*value);
+                match operands.get(symbol_id) {
+                    Some(LocalOperand::Value(value)) => {
+                        return Ok(*value);
+                    }
+
+                    Some(LocalOperand::Mutable(pointer)) => {
+                        let symbol = self.program.symbols.get(*symbol_id);
+                        let llvm_type = self.llvm_int_type(&symbol.type_)?;
+
+                        let loaded = self.builder
+                            .build_load(
+                                llvm_type,
+                                *pointer,
+                                "loadtmp"
+                            )
+                            .map_err(|error| error.to_string())?;
+
+                        return Ok(loaded.into_int_value())
+                    }
+
+                    None => {}
                 }
 
                 match self.program.values.get(*symbol_id) {

@@ -105,6 +105,31 @@ impl Evaluator {
         symbols: &SymbolTable,
     ) -> EvaluationFlow {
         match &statement.data {
+            HirStatementData::Error => EvaluationFlow::Error,
+
+            HirStatementData::Assignment {
+                symbol,
+                expression
+            } => {
+                let value = self.evaluate_expression(expression, symbols);
+
+                if value == ComptimeValue::Error {
+                    return EvaluationFlow::Error;
+                }
+
+                let frame = self.frames
+                    .last_mut()
+                    .expect("assignment requires a function call frame");
+
+                let Some(slot) = frame.get_mut(symbol) else {
+                    panic!("HIR invariant was violated: the local should have been bound earlier");
+                };
+
+                *slot = value;
+
+                EvaluationFlow::Continue
+            },
+
             HirStatementData::Binding { symbol, expression } => {
                 let value = self.evaluate_expression(expression, symbols);
                 if value == ComptimeValue::Error {
@@ -415,7 +440,7 @@ impl Evaluator {
                         )
                     }
 
-                    SymbolKind::Local => {
+                    SymbolKind::Local { .. } => {
                         format!(
                             "local binding `{}` is unavailable outside a compile-time function call",
                             symbol_info.name,

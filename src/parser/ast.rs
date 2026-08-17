@@ -123,6 +123,10 @@ pub struct Statement {
 pub enum StatementData {
     Return(Option<Expression>),
     Binding(Binding),
+    Assignment {
+        target: Span,
+        expression: Expression,
+    },
     If(If)
 }
 
