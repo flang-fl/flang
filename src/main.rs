@@ -9,12 +9,12 @@ use std::{env, fs};
 
 mod comptime;
 pub mod diagnostics;
+mod llvm_inkwell;
 mod parser;
 mod semantic;
 pub mod source;
 pub mod tokenizer;
 mod toolchain;
-mod llvm_inkwell;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -98,18 +98,17 @@ fn compile(source: &SourceFile) -> Result<String, Vec<Diagnostic>> {
     println!();
 
     // let llvm = llvm::emit(&evaluated)?;
-    let llvm = llvm_inkwell::emit(&evaluated)
-        .map_err(|error| {
-            vec![Diagnostic::error(
-                error,
-                Span {
-                    source: SourceId(0),
-                    start: 0,
-                    end: 0,
-                },
-                ":("
-            )]
-        })?;
+    let llvm = llvm_inkwell::emit(&evaluated).map_err(|error| {
+        vec![Diagnostic::error(
+            error,
+            Span {
+                source: SourceId(0),
+                start: 0,
+                end: 0,
+            },
+            ":(",
+        )]
+    })?;
     println!("=== LLVM");
     println!("{llvm}");
     println!();
@@ -248,7 +247,7 @@ mod tests {
                 return answer + 2;
             };
             "#,
-            40 + 2
+            40 + 2,
         );
     }
 
@@ -260,7 +259,7 @@ mod tests {
                 return 2 + 3 * 4;
             };
             "#,
-            2 + 3 * 4
+            2 + 3 * 4,
         );
     }
 
@@ -272,7 +271,7 @@ mod tests {
                 return 8 - 3 - 1;
             };
             "#,
-            8 - 3 - 1
+            8 - 3 - 1,
         );
     }
 
@@ -284,7 +283,7 @@ mod tests {
                 return 1 + 2 * 3 - 4 / 5;
             };
             "#,
-            1 + 2 * 3 - 4 / 5
+            1 + 2 * 3 - 4 / 5,
         );
     }
 
@@ -313,6 +312,142 @@ mod tests {
             };
             "#,
             "overflow",
+        );
+    }
+
+    #[test]
+    fn runtime_if_takes_then_branch() {
+        assert_return_value(
+            r#"
+            comp choose = fn(condition: bool) -> i64 {
+                if condition {
+                    return 11;
+                } else {
+                    return 22;
+                }
+            };
+
+            comp main = fn() -> i64 {
+                return choose(true);
+            };
+            "#,
+            11,
+        );
+    }
+
+    #[test]
+    fn runtime_if_takes_else_branch() {
+        assert_return_value(
+            r#"
+            comp choose = fn(condition: bool) -> i64 {
+                if condition {
+                    return 11;
+                } else {
+                    return 22;
+                }
+            };
+
+            comp main = fn() -> i64 {
+                return choose(false);
+            };
+            "#,
+            22,
+        );
+    }
+
+    #[test]
+    fn runtime_else_if_takes_middle_branch() {
+        assert_return_value(
+            r#"
+            comp classify = fn(value: i64) -> i64 {
+               if value < 10 {
+                   return 1;
+               } else if value < 20 {
+                   return 2;
+               } else {
+                   return 3;
+               }
+            };
+
+            comp main = fn() -> i64 {
+                return classify(15);
+            };
+            "#,
+            2,
+        );
+    }
+
+    #[test]
+    fn if_without_else_can_continue() {
+        assert_return_value(
+            r#"
+            comp choose = fn(condition: bool) -> i64 {
+                if condition {
+                    return 9;
+                }
+
+                return 4;
+            };
+
+            comp main = fn() -> i64 {
+                return choose(false);
+            };
+            "#,
+            4
+        );
+    }
+
+    #[test]
+    fn comptime_if_selects_branch() {
+        assert_return_value(
+            r#"
+            comp choose = fn(condition: bool) -> i64 {
+                if condition {
+                    return 31;
+                } else {
+                    return 32;
+                }
+            };
+
+            comp selected = choose(false);
+
+            comp main = fn() -> i64 {
+                return selected;
+            };
+            "#,
+            32,
+        );
+    }
+
+    #[test]
+    fn rejects_non_boolean_if_condition() {
+        assert_compile_error(
+            r#"
+        comp main = fn() -> i64 {
+            if 42 {
+                return 1;
+            } else {
+                return 2;
+            }
+        };
+        "#,
+            "Type mismatch",
+        );
+    }
+
+    #[test]
+    fn branch_local_binding_does_not_escape() {
+        assert_compile_error(
+            r#"
+        comp main = fn() -> i64 {
+            if true {
+                let answer = 42;
+            }
+
+            return answer;
+        };
+        "#,
+            "Identifier not bound",
         );
     }
 }
