@@ -121,5 +121,6 @@ pub enum HirStatementData {
         symbol: SymbolId,
         expression: HirExpression,
     },
+    Expression(HirExpression),
     Error,
 }

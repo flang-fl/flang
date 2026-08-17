@@ -1,4 +1,3 @@
-use crate::semantic::types::Type;
 use crate::source::Span;
 
 #[derive(Debug, Clone)]
@@ -127,7 +126,8 @@ pub enum StatementData {
         target: Span,
         expression: Expression,
     },
-    If(If)
+    If(If),
+    Expression(Expression),
 }
 
 #[derive(Debug, Clone)]

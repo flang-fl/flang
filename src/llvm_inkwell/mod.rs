@@ -9,7 +9,7 @@ use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::types::IntType;
+use inkwell::types::{BasicMetadataTypeEnum, IntType};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
 use std::collections::HashMap;
 
@@ -125,16 +125,27 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
     fn declare_functions(&mut self) -> Result<(), String> {
         for (function_id, function) in self.program.functions.iter() {
-            let return_type = self.llvm_int_type(&function.hir.return_type)?;
-
             let parameter_types = function
                 .hir
                 .parameters
                 .iter()
                 .map(|parameter| self.llvm_int_type(&parameter.type_).map(Into::into))
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<BasicMetadataTypeEnum>, String>>()?;
 
-            let function_type = return_type.fn_type(&parameter_types, false);
+            let function_type = match &function.hir.return_type {
+                Type::I64 | Type::Bool => self
+                    .llvm_int_type(&function.hir.return_type)?
+                    .fn_type(&parameter_types, false),
+
+                Type::Unit => self.context.void_type().fn_type(&parameter_types, false),
+
+                unsupported => {
+                    return Err(format!(
+                        "unsupported LLVM function return type: `{:?}`",
+                        unsupported
+                    ));
+                }
+            };
 
             let name = llvm_function_name(function_id);
 
@@ -188,7 +199,17 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         let flow = self.emit_block(&function.hir.body, &mut operands)?;
 
         match flow {
-            EmitFlow::Continues => Err("Function body without a return".to_owned()),
+            EmitFlow::Continues => {
+                if function.hir.return_type == Type::Unit {
+                    self.builder
+                        .build_return(None)
+                        .map_err(|error| error.to_string())?;
+
+                    Ok(())
+                } else {
+                    Err("Function body without a return".to_owned())
+                }
+            }
             EmitFlow::Terminates => Ok(()),
         }
     }
@@ -216,6 +237,27 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     ) -> Result<EmitFlow, String> {
         match &statement.data {
             HirStatementData::Error => Err("Evil".to_owned()),
+
+            HirStatementData::Expression(expression) => {
+                let HirExpressionData::Call {
+                    callee,
+                    arguments,
+                } = &expression.data else {
+                    return Err(
+                        "unsupported unit expression statement".to_owned()
+                    );
+                };
+
+                let value = self.emit_call(operands, callee, arguments)?;
+
+                if value.is_some() {
+                    return Err(
+                        "value-producing expression used as a unit statement".to_owned()
+                    );
+                }
+
+                Ok(EmitFlow::Continues)
+            }
 
             HirStatementData::Assignment { symbol, expression } => {
                 let value = self.emit_expression(expression, operands)?;
@@ -346,7 +388,11 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirStatementData::Return(None) => {
-                Err("i64 function cannot return without a value".to_owned())
+                self.builder
+                    .build_return(None)
+                    .map_err(|error| error.to_string())?;
+
+                Ok(EmitFlow::Terminates)
             }
         }
     }
@@ -371,15 +417,12 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                         let symbol = self.program.symbols.get(*symbol_id);
                         let llvm_type = self.llvm_int_type(&symbol.type_)?;
 
-                        let loaded = self.builder
-                            .build_load(
-                                llvm_type,
-                                *pointer,
-                                "loadtmp"
-                            )
+                        let loaded = self
+                            .builder
+                            .build_load(llvm_type, *pointer, "loadtmp")
                             .map_err(|error| error.to_string())?;
 
-                        return Ok(loaded.into_int_value())
+                        return Ok(loaded.into_int_value());
                     }
 
                     None => {}
@@ -447,26 +490,8 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirExpressionData::Call { callee, arguments } => {
-                let llvm_function = self.resolve_function(callee)?;
-
-                let llvm_arguments = arguments
-                    .iter()
-                    .map(|argument| {
-                        self.emit_expression(argument, operands)
-                            .map(BasicMetadataValueEnum::from)
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-
-                let call = self
-                    .builder
-                    .build_call(llvm_function, &llvm_arguments, "calltmp")
-                    .map_err(|error| error.to_string())?;
-
-                let value = call.try_as_basic_value().basic().ok_or_else(|| {
-                    "expected runtime call to produce an integer-like value".to_owned()
-                })?;
-
-                Ok(value.into_int_value())
+                self.emit_call(operands, callee, arguments)?
+                    .ok_or_else(|| "unit-returning call used as a value".to_owned())
             }
 
             HirExpressionData::Bool(bool) => {
@@ -477,6 +502,35 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 Err("expression is not supported by Inkwell backend yet".to_owned())
             }
         }
+    }
+
+    fn emit_call(
+        &self,
+        operands: &Operands<'ctx>,
+        callee: &HirExpression,
+        arguments: &[HirExpression],
+    ) -> Result<Option<IntValue<'ctx>>, String> {
+        let llvm_function = self.resolve_function(callee)?;
+
+        let llvm_arguments = arguments
+            .iter()
+            .map(|argument| {
+                self.emit_expression(argument, operands)
+                    .map(BasicMetadataValueEnum::from)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        let call = self
+            .builder
+            .build_call(llvm_function, &llvm_arguments, "calltmp")
+            .map_err(|error| error.to_string())?;
+
+        let value = call
+            .try_as_basic_value()
+            .basic()
+            .map(|value| value.into_int_value());
+
+        Ok(value)
     }
 
     fn resolve_function(&self, callee: &HirExpression) -> Result<FunctionValue<'ctx>, String> {

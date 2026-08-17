@@ -107,6 +107,12 @@ impl Evaluator {
         match &statement.data {
             HirStatementData::Error => EvaluationFlow::Error,
 
+            HirStatementData::Expression(expression) => {
+                self.evaluate_expression(expression, symbols);
+
+                EvaluationFlow::Continue
+            }
+
             HirStatementData::Assignment {
                 symbol,
                 expression

@@ -1,6 +1,12 @@
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, If, Item, ItemData, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
-use crate::semantic::hir::{HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirParameter, HirProgram, HirStatement, HirStatementData};
+use crate::parser::ast::{
+    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, If, Item, ItemData,
+    Program, Statement, StatementData, TypeExpression, TypeExpressionData,
+};
+use crate::semantic::hir::{
+    HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
+    HirParameter, HirProgram, HirStatement, HirStatementData,
+};
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
 use crate::source::{SourceFile, Span};
@@ -525,51 +531,54 @@ impl<'src> Analyzer<'src> {
 
     fn analyze_statement(&mut self, statement: &Statement, return_type: &Type) -> HirStatement {
         match &statement.data {
-            StatementData::Assignment {
-                target,
-                expression,
-            } => {
+            StatementData::Expression(expression) => {
+                let expression = self.analyze_expression(expression, Some(&Type::Unit));
+
+                HirStatement {
+                    span: statement.span,
+                    data: HirStatementData::Expression(expression),
+                }
+            }
+
+            StatementData::Assignment { target, expression } => {
                 let name = self.source.span_text(*target);
-                
+
                 let Some(symbol_id) = self.environment.lookup(name) else {
                     self.diagnostics.push(Diagnostic::error(
                         "Unknown assignment target",
                         *target,
-                        format!("`{name}` is not defined")
+                        format!("`{name}` is not defined"),
                     ));
-                    
+
                     return HirStatement::error(*target);
                 };
-                
+
                 let (target_type, mutable) = {
                     let symbol = self.symbols.get(symbol_id);
-                    
-                    let mutable = matches!(
-                        symbol.kind,
-                        SymbolKind::Local { mutable: true }
-                    );
+
+                    let mutable = matches!(symbol.kind, SymbolKind::Local { mutable: true });
 
                     (symbol.type_.clone(), mutable)
                 };
-                
+
                 let expression = self.analyze_expression(expression, Some(&target_type));
-                
+
                 if !mutable {
                     self.diagnostics.push(Diagnostic::error(
                         "Cannot assign to immutable binding",
                         *target,
-                        format!("`{name}` is not mutable")
+                        format!("`{name}` is not mutable"),
                     ));
-                    
+
                     return HirStatement::error(statement.span);
                 }
-                
+
                 HirStatement {
                     span: statement.span,
                     data: HirStatementData::Assignment {
                         symbol: symbol_id,
                         expression,
-                    }
+                    },
                 }
             }
 
@@ -578,10 +587,7 @@ impl<'src> Analyzer<'src> {
                 then_block,
                 else_,
             }) => {
-                let condition = self.analyze_expression(
-                    condition,
-                    Some(&Type::Bool)
-                );
+                let condition = self.analyze_expression(condition, Some(&Type::Bool));
 
                 let then_block = self.analyze_block(then_block, return_type);
 
@@ -591,8 +597,7 @@ impl<'src> Analyzer<'src> {
                         Some(HirElseBranch::Else(self.analyze_block(block, return_type)))
                     }
                     Some(ElseBranch::ElseIf(statement)) => {
-                        let hir_statement =
-                            self.analyze_statement(statement.as_ref(), return_type);
+                        let hir_statement = self.analyze_statement(statement.as_ref(), return_type);
 
                         Some(HirElseBranch::ElseIf(Box::new(hir_statement)))
                     }
@@ -604,9 +609,9 @@ impl<'src> Analyzer<'src> {
                         condition,
                         then_block,
                         else_branch,
-                    }
+                    },
                 }
-            },
+            }
 
             StatementData::Binding(binding) => {
                 let name = self.source.span_text(binding.name).to_owned();

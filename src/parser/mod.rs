@@ -350,21 +350,31 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             Some(TokenKind::Return) => self.parse_return_statement(),
             Some(TokenKind::If) => self.parse_if_statement(),
             Some(TokenKind::Identifier) => {
-                let identifier = self.expect(TokenKind::Identifier, "Expected identifier")?;
+                if self.peek_offset_is(1, TokenKind::Eq) {
+                    let identifier = self.expect(TokenKind::Identifier, "Expected identifier")?;
 
-                let _ = self.expect(TokenKind::Eq, "Expected `=` for assignment")?;
+                    let _ = self.expect(TokenKind::Eq, "Expected `=` for assignment")?;
 
-                let expression = self.parse_expression()?;
+                    let expression = self.parse_expression()?;
 
-                let semi = self.expect(TokenKind::Semi, "Expected `;` after assignment")?;
+                    let semi = self.expect(TokenKind::Semi, "Expected `;` after assignment")?;
 
-                Some(Statement {
-                    span: self.source.fromto(identifier.span, semi.span),
-                    data: StatementData::Assignment {
-                        target: identifier.span,
-                        expression,
-                    }
-                })
+                    Some(Statement {
+                        span: self.source.fromto(identifier.span, semi.span),
+                        data: StatementData::Assignment {
+                            target: identifier.span,
+                            expression,
+                        }
+                    })
+                } else {
+                    let expression = self.parse_expression()?;
+                    let semi = self.expect(TokenKind::Semi, "Expected `;` after assignment")?;
+
+                    Some(Statement {
+                        span: self.source.fromto(expression.span, semi.span),
+                        data: StatementData::Expression(expression)
+                    })
+                }
             }
 
             _ => None,
@@ -410,8 +420,13 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
     // Utilities
     fn peek(&self) -> Option<Token> {
-        if self.index < self.tokens.len() {
-            Some(self.tokens[self.index])
+        self.peek_offset(0)
+    }
+
+    fn peek_offset(&self, offset: usize) -> Option<Token> {
+        let index = self.index + offset;
+        if index < self.tokens.len() {
+            Some(self.tokens[index])
         } else {
             None
         }
@@ -419,6 +434,10 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
     fn peek_is(&self, kind: TokenKind) -> bool {
         self.peek().is_some_and(|token| token.kind == kind)
+    }
+
+    fn peek_offset_is(&self, offset: usize, kind: TokenKind) -> bool {
+        self.peek_offset(offset).is_some_and(|token| token.kind == kind)
     }
 
     fn consume(&mut self) -> Option<Token> {

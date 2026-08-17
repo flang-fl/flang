@@ -1,0 +1,11 @@
+comp evil = fn() -> unit {
+    let x = 5;
+    if x < 4 {
+        return;
+    }
+};
+
+comp main = fn() -> i64 {
+    evil();
+    return 4;
+};
