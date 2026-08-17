@@ -61,6 +61,34 @@ impl<'src> Analyzer<'src> {
 
         environment.define("bool".to_owned(), bool_id);
 
+        let print_i64_id = symbols.insert(Symbol {
+            name: "print_i64".to_owned(),
+            kind: SymbolKind::ExternFunction {
+                link_name: "flang_print_i64".to_owned()
+            },
+            declaration_span: None,
+            type_: Type::Function {
+                parameters: vec![Type::I64],
+                return_type: Box::new(Type::Unit)
+            }
+        });
+
+        environment.define("print_i64".to_owned(), print_i64_id);
+
+        let print_bool_id = symbols.insert(Symbol {
+            name: "print_bool".to_owned(),
+            kind: SymbolKind::ExternFunction {
+                link_name: "flang_print_bool".to_owned()
+            },
+            declaration_span: None,
+            type_: Type::Function {
+                parameters: vec![Type::Bool],
+                return_type: Box::new(Type::Unit)
+            }
+        });
+
+        environment.define("print_bool".to_owned(), print_bool_id);
+
         Self {
             source,
             symbols,

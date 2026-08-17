@@ -412,6 +412,13 @@ impl Evaluator {
                 let symbol_info = symbols.get(*symbol);
 
                 let message = match &symbol_info.kind {
+                    SymbolKind::ExternFunction { .. } => {
+                        format!(
+                            "runtime external function `{}` is unavailable at compile time",
+                            symbol_info.name
+                        )
+                    }
+
                     SymbolKind::BuiltinType(_) => {
                         format!(
                             "internal error: built-in `{}` has no compile-time value",

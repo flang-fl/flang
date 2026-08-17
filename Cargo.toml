@@ -3,6 +3,11 @@ name = "flang-design"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["src/flang_static_lib"]
+default-members = [".", "src/flang_static_lib"]
+resolver = "3"
+
 [dependencies]
 ariadne = "0.6.0"
 inkwell = { version = "0.10.0", features = ["llvm22-1"]}

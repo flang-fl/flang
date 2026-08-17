@@ -17,6 +17,7 @@ pub fn emit(program: &EvaluatedProgram) -> Result<String, String> {
     let context = Context::create();
     let mut generator = CodeGenerator::new(&context, program);
 
+    generator.declare_external_functions()?;
     generator.declare_functions()?;
     generator.emit_function_bodies()?;
     generator.emit_main_wrapper()?;
@@ -43,6 +44,7 @@ pub struct CodeGenerator<'ctx, 'program> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     functions: HashMap<FunctionId, FunctionValue<'ctx>>,
+    external_functions: HashMap<SymbolId, FunctionValue<'ctx>>,
 }
 
 impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
@@ -52,8 +54,62 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             program,
             module: context.create_module("flang"),
             builder: context.create_builder(),
+            external_functions: HashMap::new(),
             functions: HashMap::new(),
         }
+    }
+
+    fn declare_external_functions(&mut self) -> Result<(), String> {
+        for (index, symbol) in self.program.symbols.symbols.iter().enumerate() {
+            let SymbolKind::ExternFunction { link_name } = &symbol.kind else {
+                continue;
+            };
+
+            let Type::Function {
+                parameters,
+                return_type
+            } = &symbol.type_ else {
+                return Err(
+                    "external function symbol does not have a function type".to_owned()
+                );
+            };
+
+            let parameter_types = parameters
+                .iter()
+                .map(|parameter| {
+                    self.llvm_int_type(parameter).map(Into::into)
+                })
+                .collect::<Result<Vec<BasicMetadataTypeEnum>, String>>()?;
+
+            let function_type = match return_type.as_ref() {
+                Type::I64 | Type::Bool => {
+                    self.llvm_int_type(return_type)?
+                        .fn_type(&parameter_types, false)
+                }
+
+                Type::Unit => {
+                    self.context
+                        .void_type()
+                        .fn_type(&parameter_types, false)
+                }
+
+                unsupported => {
+                    return Err(format!(
+                        "unsupported external return type {unsupported:?}"
+                    ));
+                }
+            };
+
+            let llvm_function =
+            self.module.add_function(link_name, function_type, None);
+
+            self.external_functions.insert(
+                SymbolId(index as u32),
+                llvm_function
+            );
+        }
+
+        Ok(())
     }
 
     fn emit_main_wrapper(&self) -> Result<(), String> {
@@ -537,6 +593,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         let HirExpressionData::Symbol(symbol_id) = &callee.data else {
             return Err("Inkwell backend only supports statically known callees rn".to_owned());
         };
+        
+        if let Some(function) = self.external_functions.get(symbol_id) {
+            return Ok(*function);
+        }
 
         let Some(ComptimeValue::Function(function_id)) = self.program.values.get(*symbol_id) else {
             return Err("callee does not have a compile-time function value".to_owned());

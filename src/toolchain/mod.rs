@@ -38,8 +38,20 @@ pub fn build_executable(
         }
     })?;
 
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+
+    let runtime_library = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(profile)
+        .join("libflang_static_lib.a");
+
     let output = Command::new("clang")
         .arg(ir_path)
+        .arg(&runtime_library)
         .arg("-o")
         .arg(executable_path)
         .output()

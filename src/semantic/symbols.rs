@@ -102,4 +102,7 @@ pub enum SymbolKind {
     Local {
         mutable: bool,
     },
+    ExternFunction {
+        link_name: String,
+    }
 }
