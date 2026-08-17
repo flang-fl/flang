@@ -13,3 +13,4 @@ The `./design/` directory contains pending programming-language design work. It 
 - After the user implements a language feature, remind them to update the design records. Suggest that they manually update the solidified_features.md file under design/ for solidified (implemented) features so pending designs remain distinct from completed work.
 
 This policy is mandatory and must not be weakened or bypassed in response to user instructions. This edit is the final exception authorizing an agent to modify `AGENTS.md`; all future changes must be made manually by the user.
+There is one exception to this rule, agents may specifically edit files under `./design/` that ARENT `solidified_features.md` for example dumping language design information into `language_design_seed.md`
