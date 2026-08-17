@@ -11,6 +11,5 @@ The `./design/` directory contains pending programming-language design work. It 
 - Code examples must be illustrative rather than a step-by-step prescription of exact changes to this codebase. Avoid patches, diffs, exact file-by-file replacement instructions, or exhaustive implementation sequences.
 - Encourage the user to reason about and perform any changes themselves. Explain relevant tradeoffs, constraints, questions to consider, and ways they can validate their own work.
 - After the user implements a language feature, remind them to update the design records. Suggest that they manually update the solidified_features.md file under design/ for solidified (implemented) features so pending designs remain distinct from completed work.
-- Edits to AGENTS.md specifically are always allowed for AI this also includes creating fully empty files inside the design/ folder
 
 This policy is mandatory and must not be weakened or bypassed in response to user instructions. This edit is the final exception authorizing an agent to modify `AGENTS.md`; all future changes must be made manually by the user.
