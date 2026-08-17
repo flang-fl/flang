@@ -1019,9 +1019,293 @@ Codex should continue exploring these rather than assuming answers:
 - Reproducible build semantics.
 - Whether effects are tracked with an explicit type/effect system or compiler capability model.
 
+### Borrowed places and views
+
+- Whether every `&T` is representation-polymorphic or only becomes so when a
+  non-native view reaches a call site.
+- How the permission of a shared versus unique view is represented in its type.
+- Whether field projection must always produce a physical reference or may
+  recursively produce another generalized borrowed place.
+- Which operations require a contiguous, physically addressable `T` rather
+  than merely a borrowed place exposing the fields of `T`.
+- How representation-polymorphic borrowed parameters interact with separate
+  compilation, function values, exported ABIs, reflection, and code sharing.
+- What safety contract a user implementation of field projection must satisfy,
+  especially for lifetimes, exclusivity, and disjoint fields.
+
 ---
 
-## 20. Suggested next design topic
+## 20. Generalized borrowed places and SoA views
+
+This section records a pending design direction for allowing code written
+against `&T` or `&mut T` to operate directly on non-contiguous representations,
+such as an element of a structure-of-arrays collection. The motivating example
+is a `MultiArrayList(Entity)` whose fields are stored in separate columns. An
+element can be represented by a small ghost/view containing an index, with its
+originating list tracked as hidden provenance.
+
+The intended source-level experience is:
+
+```text
+fn is_alive(entity: &Entity) -> bool {
+    return entity.alive && entity.health > 0;
+}
+
+let ordinary: Entity = ...;
+let ghost = entities.get_ghost(0);
+
+is_alive(&ordinary); // native reference representation
+is_alive(ghost);     // SoA ghost representation
+```
+
+The programmer should not have to expose an implementation-oriented parameter
+such as `impl Ref(Entity)` merely because the argument happens to use an SoA
+representation. The ordinary `&Entity` spelling should express the semantic
+requirement.
+
+### 20.1 References as borrowed places
+
+The proposed semantic distinction is:
+
+```text
+&T        shared borrow of a place that yields T
+&mut T    unique borrow of a place that yields T
+unsafe *T physical address of a contiguous T representation
+```
+
+Under this interpretation, a safe reference is not defined primarily as the
+address of a complete contiguous object. It is a borrowed capability through
+which the permitted operations on a `T`-place can be performed. An ordinary
+reference is the intrinsic, single-pointer implementation of such a capability.
+A view may implement the same capability using a different representation.
+
+This does not mean that every operation currently associated with a native
+reference is necessarily valid for every view. Reinterpreting all of `T` as
+bytes, passing the address of a complete `T` to foreign code, or constructing a
+physical pointer to the whole value requires a contiguous-representation
+capability. An SoA element does not have such an address and must not pretend
+that it does.
+
+### 20.2 Hidden provenance and runtime representation
+
+A ghost may expose only an index as its declared source-level data:
+
+```text
+pub comp Ghost = view<'a> {
+    index: usize;
+    ...
+}
+```
+
+The compiler additionally associates it with the borrowed origin from which it
+was produced. That association is hidden provenance rather than an ordinary,
+user-addressable field. It participates in lifetime and ownership checking and
+is supplied to view operations as a magic argument similar to `self`.
+
+The origin cannot in general be purely compile-time information. If ghosts can
+be selected dynamically, moved, returned, stored, or passed to other functions,
+generated code must retain enough information to recover both the origin and
+the index. The compiler may represent the origin as a hidden SSA value, register,
+stack field, or enclosing value without exposing it in the source-level layout.
+Optimization should normally keep origin and index in registers and inline
+field-address calculations.
+
+Moving or storing a ghost preserves this provenance. Its lifetime remains tied
+to the origin borrow. A collection cannot be structurally mutated, reallocated,
+or have index identities shifted while any incompatible ghost or projected
+reference remains live.
+
+### 20.3 Field projection contract
+
+The compiler-level abstraction is conceptually similar to the following
+illustrative interface, though it does not imply final trait syntax:
+
+```text
+comp Ref = fn(comp T: type) -> type {
+    return trait {
+        comp project = fn(
+            self: &Self,
+            comp T_Field: type,
+            comp field: FieldAccess(T, T_Field),
+        ) -> &T_Field;
+    };
+}
+```
+
+A native reference projects a field by normal address calculation. An SoA ghost
+projects it by selecting the appropriate field column and element index:
+
+```text
+project(ghost, field) {
+    return ghost.origin.get(T_Field, field, ghost.index);
+}
+```
+
+This interface is a semantic model, not necessarily something users name in
+function signatures. Views may instead expose compiler-recognized hooks such as
+`@operator_field_get` and `@operator_field_set`.
+
+An implementation must uphold an unsafe-to-implement contract:
+
+- a projected place has exactly the declared field type;
+- it remains valid for the lifetime derived from the origin borrow;
+- shared projections obey the normal aliasing rules;
+- mutable projections provide exclusive access;
+- fields advertised as disjoint do not overlap;
+- projection does not return temporary or unstable storage as a long-lived
+  reference;
+- the view cannot outlive or silently switch its originating object.
+
+Initially, every field of `T` should be genuinely projectable. Computed or
+missing fields should not satisfy this contract unless the language later gains
+a weaker value-projection abstraction distinct from borrowed places.
+
+### 20.4 Shared and unique view permissions
+
+The permission with which a ghost borrows its origin must be represented in its
+semantic type, even if source syntax often infers or abbreviates it. Conceptually:
+
+```text
+Ghost<'a, shared>
+Ghost<'a, unique>
+```
+
+A shared ghost supports field reads and shared field borrows. A unique ghost
+also supports field assignment and mutable field borrows. Making the local
+binding mutable does not upgrade its origin permission:
+
+```text
+let mut ghost = entities.get_ghost(0);
+ghost.health = 10; // invalid: the origin borrow is shared
+```
+
+Possible surface designs include separate `Ghost` and `GhostMut` types, a view
+parameterized by an inferred borrow permission, or one source-visible type with
+a compiler-maintained permission argument. Completely flow-erasing the
+difference is likely to make storage, branching, generic code, and method
+resolution difficult.
+
+The distinction between binding mutability and origin permission must remain
+the same as for ordinary ownership. `mut` permits changing through a capability;
+it does not create a capability that was not borrowed.
+
+### 20.5 Lifetimes and projected borrows
+
+Taking a field reference from a ghost should borrow the actual element in the
+corresponding column:
+
+```text
+let ghost = entities.get_ghost(0);
+let health: &f32 = &ghost.health;
+drop(ghost);
+use(health); // valid while the origin-derived lifetime remains valid
+```
+
+The lifetime of `health` is derived from the ghost's hidden origin borrow, not
+merely from the lexical lifetime of the small ghost handle.
+
+Ordinary borrow rules apply to mutable projections:
+
+```text
+let mut ghost = entities.get_ghost_mut(0);
+let health = &ghost.health;
+ghost.health = 5; // invalid while `health` is live
+```
+
+Field-sensitive borrowing may still allow access to a provably disjoint field:
+
+```text
+let health = &ghost.health;
+ghost.alive = false; // potentially valid: distinct field projections
+```
+
+This requires projection implementations to make trustworthy disjointness
+guarantees. The exact mechanism for declaring or proving such guarantees is
+open.
+
+### 20.6 Nested field access
+
+For a top-level SoA layout, a column whose element type is itself a normal
+contiguous struct can return a native reference to that struct. Access then
+continues normally:
+
+```text
+ghost.transform.position.x
+```
+
+may first project `transform` through the view and then use ordinary contiguous
+field access for `position.x`.
+
+If the collection recursively splits nested structs into further columns,
+projecting `transform` cannot return a physical `&Transform`. It must return
+another borrowed view of `Transform`. Supporting this general case suggests
+that projection should return some borrowed place of the field type rather than
+always a native reference. This recursive model is more powerful but should be
+treated as a later extension unless a motivating example requires it.
+
+### 20.7 Automatic method use
+
+Methods with borrowed receivers should work automatically on compatible views:
+
+```text
+pub is_alive = fn(self: &Self) -> bool {
+    return self.alive && self.health > 0;
+}
+
+ghost.is_alive();
+```
+
+The method is specialized for the receiver representation, and its field
+accesses use that representation's projections. A method requiring contiguous
+representation is unavailable for an SoA receiver and should produce a focused
+diagnostic at the attempted specialization.
+
+By-value receivers such as `fn(self: Self)` are not automatically supported. A
+ghost cannot move a complete `T` out of disjoint columns without reconstruction
+and separate ownership semantics. The initial design should cover `&Self` and
+`&mut Self` receivers only.
+
+### 20.8 Implicit representation specialization
+
+A function written with `&T` is conceptually representation-polymorphic. At a
+call site, the compiler selects or creates a specialization for the concrete
+borrowed-place representation:
+
+```text
+is_alive<NativeRef(Entity)>(...)
+is_alive<MultiArrayList(Entity).Ghost>(...)
+```
+
+This is static dispatch. Field projection should inline completely, with no
+virtual table, allocation, materialized AoS temporary, or per-field runtime type
+test. The desired code-generation policy is one specialization per actually
+used representation, with canonical sharing of identical specializations where
+possible.
+
+The compiler only accepts a specialization if all operations used by the
+function body are supported by that representation. For example, a function
+that only reads fields can accept an SoA ghost. A function that reinterprets the
+entire object as a contiguous byte array cannot. Failure should be diagnosed in
+terms of the unsupported operation and representation, rather than as a vague
+trait error.
+
+This design has an ABI consequence: an externally callable, separately compiled
+function with one fixed `fn(&T)` machine ABI cannot accept arbitrary future view
+representations without either specialization or type erasure. The language
+must distinguish representation-polymorphic borrowed functions from functions
+whose ABI explicitly requires a native reference. Exported functions, function
+pointers, dynamic dispatch, reflection, and incremental compilation all need a
+defined policy.
+
+One plausible default is that all `&T` parameters are semantically
+representation-polymorphic, while the compiler emits only the native-reference
+version unless a non-native representation is actually used. A concrete ABI or
+physical-reference requirement would need explicit syntax or an ABI context.
+This remains a pending design choice rather than a solidified rule.
+
+---
+
+## 21. Suggested next design topic
 
 The next useful design pass should focus on the constraint/proof system and mixed-function semantics together.
 
@@ -1065,7 +1349,7 @@ Questions to resolve include:
 
 ---
 
-## 21. Instructions for future iteration
+## 22. Instructions for future iteration
 
 When iterating on this language design:
 

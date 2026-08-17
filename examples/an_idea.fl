@@ -1,0 +1,90 @@
+comp MultiArrayList = fn(comp T_Element: type) -> type {
+  return struct {
+    data: ByteBuffer;
+    length: usize;
+    capacity: usize;
+
+    pub comp new = fn() -> Self {
+        // implementation evilishly hidden
+    }
+
+    pub comp get = fn(
+        self: &Self,
+        comp T_Value: type,
+        comp field: FieldAccess(T_Element, T_Value),
+        index: usize
+    ) -> &T_Value {
+      // implementation evilishly hidden
+    }
+
+    pub comp get_ghost = fn<'a>(
+        self: &'a Self,
+        index: usize
+    ) -> Ghost<'a> {
+        return .{
+            index: index
+        };
+    }
+
+    pub comp get_ghost_mut = fn(
+        self: &'a mut Self,
+        index: usize
+    ) -> Ghost<'a> {
+        return .{
+            index: index
+        };
+    }
+
+    // pub comp set = fn(...) {...} evilishly hidden
+
+    pub comp Ghost = view<'a> {
+      index: usize;
+
+      pub @operator_field_get = fn(
+        self: &Self,
+        origin: &'a MultiArrayList(T_Element), // this is a magic parameter akin to self for views
+        comp T_Value: type,
+        comp field: FieldAccess(T_Element, T_Value)
+      ) -> &'a T_Value {
+        return origin.get(T_Value, field, self.index);
+      };
+
+      pub @operator_field_set = fn(
+        self: &mut self,
+        origin: &'a mut MultiArrayList(T_Element),
+        comp T_Value: type,
+        comp field: FieldAccess(T_Element, T_Value),
+        value: T_Value,
+      ) -> unit {
+        origin.set(T_Value, field, self.index, value);
+      };
+    }
+  }
+}
+
+comp main = fn() -> i64 {
+    comp Entity = struct {
+        id: usize,
+        health: f32,
+        alive: bool,
+    };
+
+    let entities = MultiArrayList(Entity)::new();
+
+    entities.push(...);
+    entities.push(...);
+
+    let entity: MultiArrayList(Entity).Ghost = entities.get_ghost(0);
+    println("{}", entity.id); // allowed
+    entity.id = 5; // disallowed
+
+    let mut entity2 = entities.get_ghost_mut(0); // disallowed since `entity` is still alive
+
+    drop(entity);
+
+    let mut entity3 = entities.get_ghost_mut(0); // allowed since there's no immutable lifetimes tied to references alive
+
+    entity3.id = 5; // allowed
+}
+
+// Maybe views arent needed and references can be optimized out instead, that might be better long term and for language clarity
