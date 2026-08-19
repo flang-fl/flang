@@ -1,7 +1,7 @@
 use crate::diagnostics::{Diagnostic, Label};
 use crate::parser::ast::{
     BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, If, Item, ItemData,
-    Program, Statement, StatementData, TypeExpression, TypeExpressionData,
+    Program, Statement, StatementData, TypeExpression, TypeExpressionData, While,
 };
 use crate::semantic::hir::{
     HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
@@ -64,13 +64,13 @@ impl<'src> Analyzer<'src> {
         let print_i64_id = symbols.insert(Symbol {
             name: "print_i64".to_owned(),
             kind: SymbolKind::ExternFunction {
-                link_name: "flang_print_i64".to_owned()
+                link_name: "flang_print_i64".to_owned(),
             },
             declaration_span: None,
             type_: Type::Function {
                 parameters: vec![Type::I64],
-                return_type: Box::new(Type::Unit)
-            }
+                return_type: Box::new(Type::Unit),
+            },
         });
 
         environment.define("print_i64".to_owned(), print_i64_id);
@@ -78,13 +78,13 @@ impl<'src> Analyzer<'src> {
         let print_bool_id = symbols.insert(Symbol {
             name: "print_bool".to_owned(),
             kind: SymbolKind::ExternFunction {
-                link_name: "flang_print_bool".to_owned()
+                link_name: "flang_print_bool".to_owned(),
             },
             declaration_span: None,
             type_: Type::Function {
                 parameters: vec![Type::Bool],
-                return_type: Box::new(Type::Unit)
-            }
+                return_type: Box::new(Type::Unit),
+            },
         });
 
         environment.define("print_bool".to_owned(), print_bool_id);
@@ -606,6 +606,23 @@ impl<'src> Analyzer<'src> {
                     data: HirStatementData::Assignment {
                         symbol: symbol_id,
                         expression,
+                    },
+                }
+            }
+
+            StatementData::While(While {
+                condition,
+                while_block,
+            }) => {
+                let condition = self.analyze_expression(condition, Some(&Type::Bool));
+
+                let while_block = self.analyze_block(while_block, return_type);
+
+                HirStatement {
+                    span: statement.span,
+                    data: HirStatementData::While {
+                        condition,
+                        while_block,
                     },
                 }
             }

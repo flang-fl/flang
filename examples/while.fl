@@ -1,0 +1,10 @@
+comp main = fn() -> i64 {
+    let mut x = 1;
+    while x <= 10 {
+        print_i64(x);
+        x = x + 1;
+    }
+
+    print_bool(true);
+    return 0;
+};

@@ -407,6 +407,56 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 }
             }
 
+            HirStatementData::While {
+                condition,
+                while_block
+            } => {
+                let llvm_function = self
+                    .builder
+                    .get_insert_block()
+                    .and_then(|block| block.get_parent())
+                    .ok_or_else(|| "while emitted outside an LLVM function".to_owned())?;
+
+                let condition_bb = self
+                    .context
+                    .append_basic_block(llvm_function, "while.condition");
+
+                let body_bb = self
+                    .context
+                    .append_basic_block(llvm_function, "while.body");
+
+                let end_bb = self
+                    .context
+                    .append_basic_block(llvm_function, "while.end");
+
+                self.builder
+                    .build_unconditional_branch(condition_bb)
+                    .map_err(|error| error.to_string())?;
+
+                self.builder.position_at_end(condition_bb);
+
+                let condition_value = self.emit_expression(condition, operands)?;
+
+                self.builder
+                    .build_conditional_branch(condition_value, body_bb, end_bb)
+                    .map_err(|error| error.to_string())?;
+
+                self.builder.position_at_end(body_bb);
+
+                let mut body_operands = operands.clone();
+                let body_flow = self.emit_block(while_block, &mut body_operands)?;
+
+                if matches!(body_flow, EmitFlow::Continues) {
+                    self.builder
+                        .build_unconditional_branch(condition_bb)
+                        .map_err(|error| error.to_string())?;
+                }
+
+                self.builder.position_at_end(end_bb);
+
+                Ok(EmitFlow::Continues)
+            },
+
             HirStatementData::Binding { symbol, expression } => {
                 let value = self.emit_expression(expression, &operands)?;
                 let symbol_info = self.program.symbols.get(*symbol);

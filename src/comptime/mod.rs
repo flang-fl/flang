@@ -108,9 +108,10 @@ impl Evaluator {
             HirStatementData::Error => EvaluationFlow::Error,
 
             HirStatementData::Expression(expression) => {
-                self.evaluate_expression(expression, symbols);
-
-                EvaluationFlow::Continue
+                match self.evaluate_expression(expression, symbols) {
+                    ComptimeValue::Error => EvaluationFlow::Error,
+                    _ => EvaluationFlow::Continue,
+                }
             }
 
             HirStatementData::Assignment {
@@ -158,6 +159,48 @@ impl Evaluator {
             HirStatementData::Return(None) => {
                 EvaluationFlow::Return(ComptimeValue::Unit)
             },
+
+            HirStatementData::While {
+                condition,
+                while_block
+            } => {
+                loop {
+                    match self.evaluate_expression(condition, symbols) {
+                        ComptimeValue::Bool(false) => {
+                            return EvaluationFlow::Continue;
+                        }
+
+                        ComptimeValue::Bool(true) => {}
+
+                        ComptimeValue::Error => {
+                            return EvaluationFlow::Error;
+                        }
+
+                        _ => {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Internal Compiler Error",
+                                condition.span,
+                                "not a boolean expression"
+                            ));
+                            return EvaluationFlow::Error;
+                        }
+                    }
+
+                    match self.evaluate_block(while_block, symbols) {
+                        EvaluationFlow::Continue => {
+
+                        }
+
+                        EvaluationFlow::Return(value) => {
+                            return EvaluationFlow::Return(value);
+                        }
+
+                        EvaluationFlow::Error => {
+                            return EvaluationFlow::Error;
+                        }
+                    }
+                }
+            }
 
             HirStatementData::If {
                 condition,

@@ -127,14 +127,21 @@ pub enum StatementData {
         expression: Expression,
     },
     If(If),
+    While(While),
     Expression(Expression),
 }
 
 #[derive(Debug, Clone)]
 pub struct If {
-    pub(crate) condition: Expression,
-    pub(crate) then_block: Block,
-    pub(crate) else_: Option<ElseBranch>
+    pub condition: Expression,
+    pub then_block: Block,
+    pub else_: Option<ElseBranch>
+}
+
+#[derive(Debug, Clone)]
+pub struct While {
+    pub condition: Expression,
+    pub while_block: Block,
 }
 
 #[derive(Debug, Clone)]

@@ -117,6 +117,10 @@ pub enum HirStatementData {
         then_block: HirBlock,
         else_branch: Option<HirElseBranch>,
     },
+    While {
+        condition: HirExpression,
+        while_block: HirBlock
+    },
     Assignment {
         symbol: SymbolId,
         expression: HirExpression,

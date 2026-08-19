@@ -93,6 +93,7 @@ impl<'src> Tokenizer<'src> {
             "comp" => TokenKind::Comp,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
+            "while" => TokenKind::While,
             "return" => TokenKind::Return,
 
             _ => return None,
@@ -258,6 +259,7 @@ pub enum TokenKind {
     Comp,
     True,
     False,
+    While,
     Return,
 
     // Symbols

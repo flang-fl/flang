@@ -1,6 +1,6 @@
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData};
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData, While};
 use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
 use std::cmp::min;
@@ -252,7 +252,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             }
         };
 
-        let body = self.parse_body()?;
+        let body = self.parse_block()?;
 
         let end_span = body.span;
 
@@ -276,7 +276,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         })
     }
 
-    fn parse_body(&mut self) -> Option<Block> {
+    fn parse_block(&mut self) -> Option<Block> {
         let lcurly = self.expect(TokenKind::LCurly, "Expected `{` for block")?;
 
         let mut statements = Vec::new();
@@ -348,6 +348,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         match self.peek().map(|token| token.kind) {
             Some(TokenKind::Let) => self.parse_let_statement(),
             Some(TokenKind::Return) => self.parse_return_statement(),
+            Some(TokenKind::While) => self.parse_while_statement(),
             Some(TokenKind::If) => self.parse_if_statement(),
             Some(TokenKind::Identifier) => {
                 if self.peek_offset_is(1, TokenKind::Eq) {
@@ -381,11 +382,26 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         }
     }
 
+    fn parse_while_statement(&mut self) -> Option<Statement> {
+        let while_ = self.expect(TokenKind::While, "Expected `while`")?;
+
+        let condition = self.parse_expression()?;
+        let block = self.parse_block()?;
+
+        Some(Statement {
+            span: self.source.fromto(while_.span, block.span),
+            data: StatementData::While(While {
+                condition,
+                while_block: block,
+            })
+        })
+    }
+
     fn parse_if_statement(&mut self) -> Option<Statement> {
         let if_ = self.expect(TokenKind::If, "Expected `if`")?;
 
         let condition = self.parse_expression()?;
-        let body = self.parse_body()?;
+        let body = self.parse_block()?;
 
         let (else_if, end_span): (Option<ElseBranch>, Span) = if self.peek_is(TokenKind::Else) {
             self.expect(TokenKind::Else, "Expected `else`")?;
@@ -397,7 +413,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                     span,
                 )
             } else {
-                let body = self.parse_body()?;
+                let body = self.parse_block()?;
                 let span = body.span;
                 (
                     Some(ElseBranch::Else(body)),
