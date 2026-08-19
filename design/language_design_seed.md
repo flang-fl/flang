@@ -254,17 +254,19 @@ comp b = foo(i32);
 // a and b refer to the same canonical specialization
 ```
 
-Likewise, type-producing compile-time functions should generally canonicalize/memoize equivalent instantiations:
+Compile-time functions that produce types, traits, or implementation evidence are
+semantically memoized. Their bodies execute at most once for a given
+specialization key, and repeated calls return the same nominal entity:
 
 ```text
 comp Vec = fn(comp T: type) -> type {
-    return struct { data: *T };
+    return struct { data: T };
 };
 
 comp A = Vec(i32);
 comp B = Vec(i32);
 
-// desirable: A == B
+// A == B
 ```
 
 This differs from evaluating two independent literal struct expressions, which should produce distinct nominal types.
@@ -275,7 +277,9 @@ A plausible identity model for specialization is based on:
 (original function identity, compile-time argument identities/values)
 ```
 
-Exact rules remain open.
+Primitive compile-time values participate by value, while nominal program
+entities participate by identity. Exact key rules for other compile-time values
+remain open.
 
 ---
 
@@ -385,8 +389,9 @@ Type constraint example:
 ```text
 fn sum(comp T: type, values: []T) -> T
 where {
-    Add(T, T).Output == T;
-    Zero(T);
+    T implements Add(T);
+    impl(T, Add(T)).Output == T;
+    T implements Zero;
 }
 {
     ...
@@ -1019,30 +1024,38 @@ Codex should continue exploring these rather than assuming answers:
 - Reproducible build semantics.
 - Whether effects are tracked with an explicit type/effect system or compiler capability model.
 
-### Borrowed places and views
+### Reference projections and ghosts
 
-- Whether every `&T` is representation-polymorphic or only becomes so when a
-  non-native view reaches a call site.
-- How the permission of a shared versus unique view is represented in its type.
-- Whether field projection must always produce a physical reference or may
-  recursively produce another generalized borrowed place.
-- Which operations require a contiguous, physically addressable `T` rather
-  than merely a borrowed place exposing the fields of `T`.
+- Whether every `&T` parameter is representation-polymorphic or only becomes
+  so when a non-native `Ref(T)` implementation reaches a call site.
+- The final declaration and implementation syntax for `Ref(T)` and `RefMut(T)`.
+- Whether projected nested structs must be contiguous or may themselves be
+  represented by another `Ref(FieldType)` implementation.
+- Which operations require a native, physically addressable `T` rather than a
+  `Ref(T)` implementation that exposes its fields.
 - How representation-polymorphic borrowed parameters interact with separate
   compilation, function values, exported ABIs, reflection, and code sharing.
+- How mutable field projection expresses and proves that different fields are
+  disjoint without conservatively borrowing an entire ghost.
 - What safety contract a user implementation of field projection must satisfy,
-  especially for lifetimes, exclusivity, and disjoint fields.
+  especially for returned lifetimes, exclusivity, and disjoint fields.
 
 ---
 
-## 20. Generalized borrowed places and SoA views
+## 20. Reference projection traits and SoA ghosts
 
 This section records a pending design direction for allowing code written
 against `&T` or `&mut T` to operate directly on non-contiguous representations,
 such as an element of a structure-of-arrays collection. The motivating example
-is a `MultiArrayList(Entity)` whose fields are stored in separate columns. An
-element can be represented by a small ghost/view containing an index, with its
-originating list tracked as hidden provenance.
+is a `MultiArrayList(Entity)` whose fields are stored in separate columns.
+
+The earlier proposal introduced a special `view` program entity whose origin
+was tracked by invisible compiler provenance. That mechanism is intentionally
+deferred. A ghost should initially be an ordinary struct that explicitly stores
+a reference to its originating collection and an element index. Correctness
+must not depend on the compiler eliminating either field. Ordinary inlining,
+scalar replacement, constant propagation, dead-field elimination, and register
+allocation may optimize the representation when possible.
 
 The intended source-level experience is:
 
@@ -1061,73 +1074,71 @@ is_alive(ghost);     // SoA ghost representation
 The programmer should not have to expose an implementation-oriented parameter
 such as `impl Ref(Entity)` merely because the argument happens to use an SoA
 representation. The ordinary `&Entity` spelling should express the semantic
-requirement.
+requirement, with the concrete reference representation inferred and
+specialized at the call site.
 
-### 20.1 References as borrowed places
+### 20.1 Ordinary ghost representations
 
-The proposed semantic distinction is:
-
-```text
-&T        shared borrow of a place that yields T
-&mut T    unique borrow of a place that yields T
-unsafe *T physical address of a contiguous T representation
-```
-
-Under this interpretation, a safe reference is not defined primarily as the
-address of a complete contiguous object. It is a borrowed capability through
-which the permitted operations on a `T`-place can be performed. An ordinary
-reference is the intrinsic, single-pointer implementation of such a capability.
-A view may implement the same capability using a different representation.
-
-This does not mean that every operation currently associated with a native
-reference is necessarily valid for every view. Reinterpreting all of `T` as
-bytes, passing the address of a complete `T` to foreign code, or constructing a
-physical pointer to the whole value requires a contiguous-representation
-capability. An SoA element does not have such an address and must not pretend
-that it does.
-
-### 20.2 Hidden provenance and runtime representation
-
-A ghost may expose only an index as its declared source-level data:
+The shared and mutable forms should be separate ordinary types. Their
+illustrative shapes are:
 
 ```text
-pub comp Ghost = view<'a> {
+comp Ghost = struct<'a, comp T: type> {
+    origin: &'a MultiArrayList(T);
     index: usize;
-    ...
-}
+};
+
+comp GhostMut = struct<'a, comp T: type> {
+    origin: &'a mut MultiArrayList(T);
+    index: usize;
+};
 ```
 
-The compiler additionally associates it with the borrowed origin from which it
-was produced. That association is hidden provenance rather than an ordinary,
-user-addressable field. It participates in lifetime and ownership checking and
-is supplied to view operations as a magic argument similar to `self`.
+The actual types may be nested inside `MultiArrayList(T)` and may infer `T` and
+the lifetime rather than spelling them as above. The important property is that
+the origin and index are real, ordinary fields with ordinary ownership rules.
 
-The origin cannot in general be purely compile-time information. If ghosts can
-be selected dynamically, moved, returned, stored, or passed to other functions,
-generated code must retain enough information to recover both the origin and
-the index. The compiler may represent the origin as a hidden SSA value, register,
-stack field, or enclosing value without exposing it in the source-level layout.
-Optimization should normally keep origin and index in registers and inline
-field-address calculations.
+Moving, storing, returning, or passing a ghost therefore needs no special
+provenance mechanism. The stored reference keeps the collection borrowed. A
+collection cannot be structurally mutated, reallocated, or have index identities
+shifted while an incompatible ghost or projected reference remains live.
 
-Moving or storing a ghost preserves this provenance. Its lifetime remains tied
-to the origin borrow. A collection cannot be structurally mutated, reallocated,
-or have index identities shifted while any incompatible ghost or projected
-reference remains live.
+`Ghost(T)` contains a shared collection reference and implements `Ref(T)`.
+`GhostMut(T)` contains a unique collection reference and implements both
+`Ref(T)` and `RefMut(T)`. A unique origin can be temporarily reborrowed as
+shared, just as an ordinary `&mut T` can be reborrowed as `&T`.
 
-### 20.3 Field projection contract
+The logical runtime representation is normally a collection reference plus an
+index. The optimizer may avoid materializing that pair after inlining, but the
+language gives no guarantee that it will do so and exposes no semantic
+difference when it does.
 
-The compiler-level abstraction is conceptually similar to the following
-illustrative interface, though it does not imply final trait syntax:
+### 20.2 `Ref(T)` and `RefMut(T)` projection contracts
+
+The compiler-level abstraction is conceptually similar to the following. The
+projection details remain illustrative; the general trait syntax follows
+Section 22:
 
 ```text
-comp Ref = fn(comp T: type) -> type {
+comp Ref = fn(comp T: type) -> trait {
     return trait {
-        comp project = fn(
+        comp project: fn(
             self: &Self,
             comp T_Field: type,
             comp field: FieldAccess(T, T_Field),
         ) -> &T_Field;
+    };
+}
+
+comp RefMut = fn(comp T: type) -> trait {
+    return trait {
+        require Self implements Ref(T);
+
+        comp project_mut: fn(
+            self: &mut Self,
+            comp T_Field: type,
+            comp field: FieldAccess(T, T_Field),
+        ) -> &mut T_Field;
     };
 }
 ```
@@ -1142,8 +1153,9 @@ project(ghost, field) {
 ```
 
 This interface is a semantic model, not necessarily something users name in
-function signatures. Views may instead expose compiler-recognized hooks such as
-`@operator_field_get` and `@operator_field_set`.
+function signatures. The compiler recognizes implementations of `Ref(T)` and
+`RefMut(T)` when elaborating field access, borrowed receiver methods, and calls
+to representation-polymorphic `&T` and `&mut T` parameters.
 
 An implementation must uphold an unsafe-to-implement contract:
 
@@ -1154,42 +1166,39 @@ An implementation must uphold an unsafe-to-implement contract:
 - fields advertised as disjoint do not overlap;
 - projection does not return temporary or unstable storage as a long-lived
   reference;
-- the view cannot outlive or silently switch its originating object.
+- the returned lifetime is correctly derived from the origin and receiver
+  borrow;
+- the implementation cannot outlive or silently switch its originating object.
 
 Initially, every field of `T` should be genuinely projectable. Computed or
 missing fields should not satisfy this contract unless the language later gains
 a weaker value-projection abstraction distinct from borrowed places.
 
-### 20.4 Shared and unique view permissions
+### 20.3 Shared and mutable capabilities
 
-The permission with which a ghost borrows its origin must be represented in its
-semantic type, even if source syntax often infers or abbreviates it. Conceptually:
+The separate types make origin permission explicit rather than storing it in
+hidden compiler state:
 
 ```text
-Ghost<'a, shared>
-Ghost<'a, unique>
+Ghost(Entity)     implements Ref(Entity)
+GhostMut(Entity)  implements Ref(Entity) and RefMut(Entity)
 ```
 
-A shared ghost supports field reads and shared field borrows. A unique ghost
-also supports field assignment and mutable field borrows. Making the local
-binding mutable does not upgrade its origin permission:
+Making the local binding mutable does not upgrade a shared ghost:
 
 ```text
 let mut ghost = entities.get_ghost(0);
-ghost.health = 10; // invalid: the origin borrow is shared
-```
+ghost.health = 10; // invalid: Ghost(Entity) does not implement RefMut(Entity)
 
-Possible surface designs include separate `Ghost` and `GhostMut` types, a view
-parameterized by an inferred borrow permission, or one source-visible type with
-a compiler-maintained permission argument. Completely flow-erasing the
-difference is likely to make storage, branching, generic code, and method
-resolution difficult.
+let mut ghost_mut = entities.get_ghost_mut(0);
+ghost_mut.health = 10; // valid
+```
 
 The distinction between binding mutability and origin permission must remain
 the same as for ordinary ownership. `mut` permits changing through a capability;
 it does not create a capability that was not borrowed.
 
-### 20.5 Lifetimes and projected borrows
+### 20.4 Lifetimes and projected borrows
 
 Taking a field reference from a ghost should borrow the actual element in the
 corresponding column:
@@ -1201,8 +1210,15 @@ drop(ghost);
 use(health); // valid while the origin-derived lifetime remains valid
 ```
 
-The lifetime of `health` is derived from the ghost's hidden origin borrow, not
-merely from the lexical lifetime of the small ghost handle.
+For `Ghost(T)`, which stores an immutable origin for its entire lifetime, a
+projection may preserve that origin lifetime even if the small ghost value is
+dropped. The `Ref(T)` contract must be capable of expressing this relationship
+rather than accidentally limiting every result to the lexical receiver borrow.
+
+For `GhostMut(T)`, a shared projection normally must be bounded by the shared
+reborrow of the mutable ghost. It must not remain usable while the same
+`GhostMut(T)` is used to mutate the projected place. Mutable projections are
+similarly bounded by their unique receiver reborrow.
 
 Ordinary borrow rules apply to mutable projections:
 
@@ -1223,7 +1239,13 @@ This requires projection implementations to make trustworthy disjointness
 guarantees. The exact mechanism for declaring or proving such guarantees is
 open.
 
-### 20.6 Nested field access
+An ordinary method shaped only as `project_mut(self: &mut Self, ...)` may cause
+a conservative borrow checker to treat all of `self` as borrowed, rejecting two
+simultaneous projections of known-disjoint fields. The compiler-recognized
+projection contract must preserve field paths and their disjointness, or the
+library would need a more cumbersome explicit splitting API.
+
+### 20.5 Nested field access
 
 For a top-level SoA layout, a column whose element type is itself a normal
 contiguous struct can return a native reference to that struct. Access then
@@ -1233,19 +1255,21 @@ continues normally:
 ghost.transform.position.x
 ```
 
-may first project `transform` through the view and then use ordinary contiguous
+may first project `transform` through the ghost and then use ordinary contiguous
 field access for `position.x`.
 
 If the collection recursively splits nested structs into further columns,
 projecting `transform` cannot return a physical `&Transform`. It must return
-another borrowed view of `Transform`. Supporting this general case suggests
-that projection should return some borrowed place of the field type rather than
-always a native reference. This recursive model is more powerful but should be
-treated as a later extension unless a motivating example requires it.
+another ordinary type implementing `Ref(Transform)`. Supporting this general
+case means allowing field projection to return a reference implementation for
+the field type rather than always a native reference. This recursive model is
+more powerful but should be treated as a later extension unless a motivating
+example requires it.
 
-### 20.7 Automatic method use
+### 20.6 Automatic method use
 
-Methods with borrowed receivers should work automatically on compatible views:
+Methods with borrowed receivers should work automatically on compatible
+`Ref(Self)` and `RefMut(Self)` implementations:
 
 ```text
 pub is_alive = fn(self: &Self) -> bool {
@@ -1265,22 +1289,37 @@ ghost cannot move a complete `T` out of disjoint columns without reconstruction
 and separate ownership semantics. The initial design should cover `&Self` and
 `&mut Self` receivers only.
 
+### 20.7 Native-reference-only operations
+
+An implementation of `Ref(T)` exposes the safe operations promised by the
+projection contract; it does not manufacture a contiguous `T`. Reinterpreting
+all of `T` as bytes, passing a complete `T` to foreign code, or constructing a
+physical pointer to the whole value requires a native contiguous reference or a
+separate explicit capability. An SoA ghost must not pretend that such an address
+exists.
+
+When a function body performs one of these operations, the compiler may still
+compile its native-reference specialization but must reject specialization for
+an incompatible `Ref(T)` implementation. The diagnostic should identify the
+operation requiring native representation rather than report a vague trait
+failure.
+
 ### 20.8 Implicit representation specialization
 
 A function written with `&T` is conceptually representation-polymorphic. At a
 call site, the compiler selects or creates a specialization for the concrete
-borrowed-place representation:
+reference implementation:
 
 ```text
 is_alive<NativeRef(Entity)>(...)
 is_alive<MultiArrayList(Entity).Ghost>(...)
 ```
 
-This is static dispatch. Field projection should inline completely, with no
-virtual table, allocation, materialized AoS temporary, or per-field runtime type
-test. The desired code-generation policy is one specialization per actually
-used representation, with canonical sharing of identical specializations where
-possible.
+This is static dispatch. Field projection should inline completely where
+ordinary optimization permits, with no required virtual table, allocation,
+materialized AoS temporary, or per-field runtime type test. The desired
+code-generation policy is one specialization per actually used representation,
+with canonical sharing of identical specializations where possible.
 
 The compiler only accepts a specialization if all operations used by the
 function body are supported by that representation. For example, a function
@@ -1290,22 +1329,765 @@ terms of the unsupported operation and representation, rather than as a vague
 trait error.
 
 This design has an ABI consequence: an externally callable, separately compiled
-function with one fixed `fn(&T)` machine ABI cannot accept arbitrary future view
-representations without either specialization or type erasure. The language
-must distinguish representation-polymorphic borrowed functions from functions
-whose ABI explicitly requires a native reference. Exported functions, function
-pointers, dynamic dispatch, reflection, and incremental compilation all need a
-defined policy.
+function with one fixed `fn(&T)` machine ABI cannot accept arbitrary future
+`Ref(T)` representations without either specialization or type erasure. The
+language must distinguish representation-polymorphic borrowed functions from
+functions whose ABI explicitly requires a native reference. Exported functions,
+function pointers, dynamic dispatch, reflection, and incremental compilation
+all need a defined policy.
 
 One plausible default is that all `&T` parameters are semantically
-representation-polymorphic, while the compiler emits only the native-reference
-version unless a non-native representation is actually used. A concrete ABI or
-physical-reference requirement would need explicit syntax or an ABI context.
+representation-polymorphic over `Ref(T)`, and all `&mut T` parameters are
+polymorphic over `RefMut(T)`, while the compiler emits only native-reference
+versions unless non-native implementations are actually used. A concrete ABI
+or physical-reference requirement would need explicit syntax or an ABI context.
 This remains a pending design choice rather than a solidified rule.
 
 ---
 
-## 21. Suggested next design topic
+## 21. Value enums and tagged unions
+
+The language should keep two concepts separate that Rust places under the
+single `enum` construct:
+
+- a finite set of named values, written with `enum`;
+- a tagged union of cases carrying payloads, written with `union`.
+
+Both constructs are nominal program entities and may be created anonymously
+and bound through `comp`, consistently with structs and other types.
+
+### 21.1 Strong value enums
+
+A value enum associates each named member with a value of an explicitly stated
+base type:
+
+```text
+comp Color = (u8, u8, u8);
+
+comp Colors = enum : Color {
+    Red   = (255, 0, 0),
+    Green = (0, 255, 0),
+    Blue  = (0, 0, 255),
+};
+```
+
+The default, strong form is a closed nominal type. Its inhabitants are the
+declared members, not arbitrary values of `Color`:
+
+```text
+Colors::Red : Colors
+Colors::Red.value : Color
+```
+
+The `::` spelling in this section is illustrative; whether compile-time member
+access ultimately uses `::` or the uniform `.` operator remains open.
+
+An arbitrary base value must not implicitly become a member:
+
+```text
+let cyan: Color = (0, 255, 255);
+let color: Colors = cyan;       // error
+```
+
+Conversion from a member to its associated value should initially be explicit,
+for example through `.value`. A reverse lookup such as
+`Colors.from_value(color) -> Option(Colors)` may be useful, but depends on
+equality and duplicate-value rules and is not yet part of the settled design.
+
+Because the type is closed, matching can be exhaustive without an `else`:
+
+```text
+match color {
+    Red   => ...,
+    Green => ...,
+    Blue  => ...,
+}
+```
+
+At runtime, an enum instance should generally contain only a compact member
+index/discriminant. The associated base values belong to the enum declaration
+and should be emitted or materialized only once, rather than copied into every
+instance. Conceptually:
+
+```text
+Colors::Red.tag   == 0
+Colors::Red.value == (255, 0, 0)
+```
+
+The exact associated values may remain entirely compile-time data when runtime
+access never requires them. If runtime access does require them, they can live
+in static data or be synthesized as constants. The representation width is
+therefore determined by the number of members rather than by the base type,
+subject to ABI and explicit-representation controls that remain to be designed.
+
+### 21.2 Weak value enums
+
+An optional weak form should make each declared name literally a value of the
+base type rather than an inhabitant of a new closed enum type:
+
+```text
+comp Colors = weak enum : Color {
+    Red   = (255, 0, 0),
+    Green = (0, 255, 0),
+    Blue  = (0, 0, 255),
+};
+
+Colors::Red : Color
+```
+
+The exact placement and spelling of `weak` remain open. Semantically, this form
+is a typed namespace/enumeration descriptor containing named constants. It
+does not restrict the set of possible runtime `Color` values and therefore
+cannot by itself make a match exhaustive:
+
+```text
+match color {
+    Colors::Red   => ...,
+    Colors::Green => ...,
+    Colors::Blue  => ...,
+    else          => ...,
+}
+```
+
+It remains open whether `Colors` is invalid in a runtime type position or is
+accepted there as an explicit alias for its base type. Treating it as a type
+alias is convenient but may misleadingly imply that a parameter accepts only
+the named values. Keeping the descriptor distinct and exposing a reflected
+`base_type` property would be more explicit.
+
+### 21.3 Duplicate associated values
+
+The index-based strong representation makes distinct members mechanically able
+to share an associated value: member equality would still compare their tags.
+Nevertheless, duplicate associated values are undesirable because they make
+reverse lookup ambiguous and can easily hide mistakes.
+
+The initial design should therefore either reject duplicates or, at minimum,
+produce a compiler warning. The current preference is:
+
+- reject duplicate values in a strong enum by default;
+- warn about duplicate constants in a weak enum;
+- if aliases become useful, introduce explicit alias syntax rather than making
+  accidental duplicate declarations into implicit aliases.
+
+One possible future spelling is illustrative only:
+
+```text
+comp Status = enum : i32 {
+    Success = 0,
+    Ok = alias Success,
+    Failure = 1,
+};
+```
+
+Checking uniqueness requires the associated values to support suitable
+compile-time equality. The language must decide whether this is a requirement
+on every value enum or whether duplicates are diagnosed only when equality is
+available/provable. Reverse lookup should only exist when its equality and
+uniqueness requirements are satisfied.
+
+### 21.4 Tagged unions
+
+A tagged union declares named cases with payload types:
+
+```text
+comp Player = struct {
+    health: i32,
+    money: f64,
+};
+
+comp Creeper = struct {
+    health: i32,
+    fuse: f32,
+};
+
+comp Entity = union {
+    Player,
+    Creeper,
+};
+```
+
+The shorthand expands to:
+
+```text
+comp Entity = union {
+    Player: Player,
+    Creeper: Creeper,
+};
+```
+
+The identifier on the left is the case tag; the expression on the right is its
+payload type. They remain semantically distinct even when shorthand gives them
+the same spelling. This permits multiple cases with the same payload type:
+
+```text
+comp Result = union {
+    Accepted: i32,
+    Rejected: i32,
+};
+```
+
+Unlike a value enum member, a union case denotes a family of values carrying
+payloads. There is one `Colors::Red`, but potentially many distinct
+`Entity::Player(...)` values.
+
+Cases may contain anonymous inline types:
+
+```text
+comp Entity = union {
+    Player: struct {
+        health: i32,
+        money: f64,
+    },
+    Creeper: struct {
+        health: i32,
+        fuse: f32,
+    },
+};
+```
+
+### 21.5 First-class case types
+
+The preferred direction is for each tagged-union case to be a genuine nested,
+nominal case type:
+
+```text
+Entity::Player : type
+Entity::Creeper : type
+```
+
+Constructing a case produces that case type, which can then be embedded into
+the enclosing union through a special lossless case-to-union conversion:
+
+```text
+let player: Entity::Player = Entity::Player {
+    health: 5,
+    money: 12.5,
+};
+
+let entity: Entity = player;
+```
+
+This relationship is conceptually similar to:
+
+```text
+Entity::Player <: Entity
+Entity::Creeper <: Entity
+```
+
+but need not introduce general-purpose object-oriented subtyping. It is a
+specific relationship between a union and its cases.
+
+First-class case types compose naturally with flow-sensitive narrowing:
+
+```text
+if entity is Entity::Player {
+    // entity is refined to Entity::Player in this region
+    use(entity.money);
+}
+
+if entity is Entity::Player(let player) {
+    use(player.health);
+}
+```
+
+This is preferred over making `Entity::Player(...)` immediately return an
+opaque `Entity`, because case types allow case-specific bindings, APIs,
+reflection, and precise pattern refinements.
+
+For a named payload, the case type should remain distinct from the payload:
+
+```text
+Entity::Player != Player
+Entity::Player.payload_type == Player
+```
+
+The explicit conceptual construction is:
+
+```text
+let raw: Player = Player {
+    health: 5,
+    money: 12.5,
+};
+
+let case: Entity::Player = Entity::Player(raw);
+let entity: Entity = case;
+```
+
+For struct-shaped payloads, brace construction should forward through the
+payload constructor as ergonomic sugar:
+
+```text
+let case = Entity::Player {
+    health: 5,
+    money: 12.5,
+};
+```
+
+Conceptually this constructs the `Player` payload and immediately produces the
+`Entity::Player` case value. The expression's type is `Entity::Player`, not the
+raw payload type and not yet the erased enclosing `Entity` type.
+
+For scalar and other non-struct payloads, call-like construction is natural:
+
+```text
+comp Value = union {
+    Integer: i64,
+    Name: string,
+};
+
+let integer: Value::Integer = Value::Integer(42);
+let name: Value::Name = Value::Name("Finn");
+```
+
+Tuple payload forwarding needs a precise arity rule. A form such as
+`Shape::Point(2.0, 4.0)` could desugar to construction of the tuple payload
+`(2.0, 4.0)`, but the language must avoid ambiguity between multiple constructor
+arguments and one tuple value.
+
+Payloadless cases should also be supported:
+
+```text
+comp ConnectionState = union {
+    Disconnected,
+    Connecting,
+    Connected: Connection,
+};
+
+let state = ConnectionState::Disconnected;
+```
+
+The bare payloadless spelling is preferred for convenience, though it creates
+a context-sensitive overlap between the case type and its singleton case
+value. Requiring `Disconnected()` is an available alternative if that overlap
+proves confusing.
+
+### 21.6 Qualification syntax
+
+Whether these examples ultimately use `::` or only `.` remains undecided.
+
+Using `::` visibly separates compile-time/type-level qualification from
+runtime value access:
+
+```text
+Entity::Player
+Colors::Red.value
+entity.health
+```
+
+Using only `.` better reflects the language's model in which types and program
+entities are ordinary compile-time values:
+
+```text
+Entity.Player
+Colors.Red.value
+entity.health
+```
+
+Uniform `.` is less noisy and aligns with unified compile-time reflection, but
+does not visually distinguish transitions between compile-time program objects
+and runtime values. The compiler can still reject invalid access such as
+`entity.Player` based on the type and phase of the left-hand expression.
+
+The semantic design should not depend on this punctuation choice. In either
+form, qualification must support:
+
+- referring to a union case as a type;
+- constructing a value of that case type;
+- referring to a strong enum member;
+- referring to a weak enum's base-typed constant;
+- reflecting on payload and base types.
+
+### 21.7 Remaining questions
+
+- Final spelling and placement of the weak-enum modifier.
+- Whether weak enum descriptors may appear in runtime type positions.
+- Whether strong-to-base conversion is always explicit or may be a safe
+  implicit coercion in selected contexts.
+- The equality requirement and exact diagnostic severity for duplicate
+  associated values.
+- Whether explicit aliases are needed and how aliases affect matching,
+  reflection, iteration, and exhaustiveness.
+- Reverse lookup semantics for strong enums.
+- ABI controls for strong-enum discriminant size and external representation.
+- Whether qualification uses `::`, `.`, or context-dependent forms.
+- Exact construction forwarding rules for named, anonymous struct, tuple,
+  scalar, and payloadless union cases.
+- Whether a payloadless case name can denote both its type and singleton value.
+- The runtime representation of a standalone case-typed value before it is
+  embedded into its enclosing union.
+
+---
+
+## 22. Inherent functions, traits, implementations, and extensions
+
+The language separates four related concepts:
+
+1. inherent compile-time declarations owned by a nominal type;
+2. traits describing compile-time requirements;
+3. implementation values providing evidence that a type satisfies a trait;
+4. scoped extension lookup for ordinary receiver-shaped functions.
+
+These mechanisms must not mutate a type's nominal identity after its creation.
+
+### 22.1 Inherent functions
+
+Functions attached to a struct are ordinary compile-time bindings in the
+struct's namespace:
+
+```text
+comp Vec2 = struct {
+    x: f32;
+    y: f32;
+
+    pub comp length = fn(self: &Self) -> f32 {
+        return sqrt(self.x * self.x + self.y * self.y);
+    };
+
+    pub comp zero = fn() -> Self {
+        return .{ x = 0, y = 0 };
+    };
+};
+```
+
+The explicit `comp` distinguishes a type-level declaration from a runtime
+field. A dedicated `fn name(...)` declaration form may be considered as later
+sugar, but is not part of the initial design.
+
+`self` is a reserved receiver parameter name. Initial receiver forms use normal,
+explicit parameter syntax:
+
+```text
+self: Self
+self: &Self
+self: &mut Self
+```
+
+A function is eligible for instance dot-call syntax only when it has a `self`
+receiver. A function in the type namespace without `self` is an associated
+function and is called through the type, such as `Vec2.zero()`.
+
+There is no special constructor declaration. Names such as `new`, `zero`, and
+`from_parts` are ordinary associated functions. Anonymous dot construction is
+available only when the construction site can access every initialized field;
+private fields cannot be bypassed from another file through anonymous
+construction.
+
+Dot calls perform a deliberately limited receiver adjustment. Depending on the
+declared receiver, they may move, borrow, or reborrow the receiver:
+
+```text
+value.read()       // Type.read(&value)
+value.modify()     // Type.modify(&mut value)
+value.consume()    // Type.consume(value)
+```
+
+Receiver adjustment never implicitly clones or reconstructs an owned value and
+does not imply a general conversion system.
+
+### 22.2 Trait values and requirements
+
+A trait is a nominal compile-time requirement value. It provides static dispatch
+by default and is not itself a runtime parameter type.
+
+```text
+pub comp Equality = trait {
+    pub comp equal: fn(self: &Self, other: &Self) -> bool;
+
+    pub comp not_equal = fn(self: &Self, other: &Self) -> bool {
+        return !self.equal(other);
+    };
+};
+```
+
+An uninitialized typed `comp` binding is a required associated member. An
+initialized member is an overridable default. `mut` retains its ordinary meaning
+of actual compile-time mutation and does not mean overridable. A possible
+`final` modifier for non-overridable defaults is deferred.
+
+Trait requirements may be associated types, functions, constants, or other
+compile-time values. Initial traits do not contain or structurally require
+runtime fields. Field-like abstractions should initially be expressed through
+operations; abstract place requirements remain connected to the future
+projection design.
+
+Trait members use ordinary visibility. A public trait member must be declared
+`pub`; private requirements and helpers can intentionally prevent external
+implementation and thereby support sealed traits. An implementation inherits
+the visibility declared by the trait rather than redeclaring it.
+
+`Self`, captured trait-factory parameters, and previously introduced associated
+members are lexical names within the trait and implementation body. A
+parameterized trait is produced by an ordinary compile-time function with an
+explicit return:
+
+```text
+comp Add = fn(comp Rhs: type) -> trait {
+    return trait {
+        pub comp Output: type;
+        pub comp add: fn(self: &Self, rhs: &Rhs) -> Output;
+    };
+};
+```
+
+A possible future implicit-return form such as the following is only shorthand
+and remains unsettled:
+
+```text
+comp Add = fn(comp Rhs: type) => trait {
+    // ...
+};
+```
+
+The implementing type is semantically separate from a trait's explicit
+parameters. Satisfaction is stated as a proposition:
+
+```text
+T implements Add(Rhs)
+```
+
+The proposition can appear in `where` and `ensures` clauses or in a local
+`require` statement. A trait can require other evidence without inheriting or
+creating it:
+
+```text
+pub comp Ordered = trait {
+    require Self implements Equality;
+
+    pub comp compare: fn(self: &Self, other: &Self) -> Ordering;
+};
+```
+
+Constructing an `Ordered` implementation must prove the `Equality` proposition
+from canonical or explicit local evidence. It does not synthesize or register an
+`Equality` implementation.
+
+Dynamic dispatch should eventually be supported through an explicit runtime
+representation. Its syntax, erasure rules, ownership behavior, object-safety
+restrictions, and layout remain open. A bare trait value does not implicitly
+denote that runtime representation.
+
+### 22.3 Implementation evidence
+
+An implementation is an anonymous, nominal compile-time entity and can be bound
+like other program values:
+
+```text
+comp NumberAddI32 = impl Add(i32) for Number {
+    comp Output = i64;
+    comp add = fn(self: &Self, rhs: &i32) -> Output {
+        // ...
+    };
+};
+```
+
+Every requirement without a default must be supplied explicitly. A same-named
+inherent function is never adopted automatically, but may be reused without
+duplicating its body:
+
+```text
+comp equal = Number.equal;
+```
+
+Implementation blocks may contain private helper members. Helpers are not part
+of the trait evidence surface and cannot be accessed through generic evidence.
+Extra public members not declared by the trait are rejected.
+
+Constructing evidence and registering it are distinct operations:
+
+```text
+comp NumberAddI32 = impl Add(i32) for Number {
+    // ...
+};
+
+program.add(NumberAddI32);
+```
+
+The exact registration API remains open. A later declaration shorthand may
+combine construction and registration:
+
+```text
+impl Add(i32) for Number {
+    // ...
+}
+```
+
+This shorthand would create an anonymous implementation value and immediately
+add it to the program; it would not introduce a second implementation model.
+
+A registered implementation is canonical, globally observable evidence.
+Binding visibility controls whether the evidence value can be named directly,
+not whether its registered conformance can be proven. Registration is allowed
+only by the owner of either the trait or implementing type; the exact ownership
+boundary remains open. For a given implementing type and exact trait
+specialization, at most one canonical implementation may exist.
+
+Anyone may construct unregistered evidence, including an adapter for a foreign
+trait and foreign type. Such evidence affects neither global trait solving nor
+method lookup unless it is passed explicitly into a local proof environment.
+
+Parameterized traits permit several canonical implementations for one receiver
+when their trait inputs differ:
+
+```text
+Number implements Add(i32)
+Number implements Add(i64)
+```
+
+`Output` is associated with the selected implementation rather than being a
+trait input. Consequently each `(Self, Rhs)` pair has one output and return-type
+overloading does not participate in implementation selection.
+
+The provisional type of an implementation value is written `Impl(T, Trait)`:
+
+```text
+comp serialize_with = fn(
+    comp T: type,
+    comp Serialization: Impl(T, Serialize),
+    value: &T,
+) -> Bytes {
+    return Serialization.serialize(value);
+};
+```
+
+Evidence parameters are ordinary `comp` parameters and participate in normal
+compile-time inference. Automatic inference considers canonical registered
+evidence only. Noncanonical evidence must be passed explicitly. A unique local
+evidence value takes precedence over canonical evidence for method lookup;
+multiple applicable local values are ambiguous and require explicit
+qualification.
+
+The provisional expression `impl(T, Trait)` queries canonical evidence, so an
+associated member may be projected as:
+
+```text
+impl(T, Add(Rhs)).Output
+```
+
+The spellings `Impl(...)` and `impl(...)` are tentative. The stable semantic
+distinction is between the type of evidence, construction of evidence, and a
+query for canonical evidence.
+
+Conditional implementations are ordinary compile-time functions:
+
+```text
+comp CollectionEquality = fn(
+    comp T: type,
+    comp ElementEquality: Impl(T, Equality),
+) -> Impl(Collection(T), Equality) {
+    return impl Equality for Collection(T) {
+        comp equal = fn(self: &Self, other: &Self) -> bool {
+            // use ElementEquality
+        };
+    };
+};
+```
+
+Initially, concrete results from such factories are registered. Future work may
+allow an implementation-producing function itself to be registered as an
+implementation provider. Provider overlap, recursion, termination,
+specialization, and canonical selection remain open.
+
+Type-, trait-, and implementation-producing compile-time functions are
+semantically memoized. The body executes at most once for the same factory
+identity and compile-time inputs, and repeated calls return the same nominal
+entity. Independent `struct`, `trait`, and `impl` literals remain nominally
+distinct even when their shapes match.
+
+### 22.4 Trait and associated-function lookup
+
+Registered conformance alone does not inject trait method names into every
+scope. A trait must be lexically visible before its public methods participate
+in dot-call or type-qualified lookup.
+
+For an instance call, lookup follows these rules:
+
+1. Select a compatible inherent receiver method if one exists.
+2. Otherwise gather compatible methods from visible traits with applicable
+   evidence and explicitly imported extension namespaces.
+3. Select the candidate if exactly one remains.
+4. Report ambiguity if several remain.
+
+Trait and extension candidates have equal priority. Explicit qualification
+selects the intended operation. Local evidence is considered before canonical
+evidence as described above.
+
+A trait function without `self` fundamentally belongs to its implementation
+evidence:
+
+```text
+impl(Vec, Default).default()
+```
+
+It may also be called through the implementing type as lookup sugar:
+
+```text
+Vec.default()
+```
+
+An inherent associated function wins first; otherwise exactly one matching
+public function from a visible implemented trait is required. Generic
+type-qualified calls use local or inferred canonical evidence.
+
+### 22.5 Tentative extension model
+
+The initial extension direction is deliberately tentative. An extension is an
+ordinary namespace containing public receiver-shaped functions, made eligible
+for dot-call lookup by an explicit scoped import:
+
+```text
+comp Vec2Extensions = struct {
+    pub comp magnitude_squared = fn(self: &Vec2) -> f32 {
+        return self.x * self.x + self.y * self.y;
+    };
+};
+
+use Vec2Extensions as extension;
+
+value.magnitude_squared();
+```
+
+The call elaborates to a qualified function call and does not modify `Vec2`.
+The exact namespace container and import spelling remain open. Normal imports
+must not silently activate extension lookup.
+
+Because extension members are ordinary functions, they may have compile-time
+parameters, infer types and evidence, and carry `where` constraints. An imported
+candidate is viable only when its parameters can be inferred and its proof
+obligations established.
+
+Matching extension functions never synthesize trait evidence. An explicit
+implementation may bind a requirement to an extension function, but importing
+the extension affects vocabulary only.
+
+### 22.6 Reflection model
+
+Reflection keeps inherent declarations, trait implementations, and extensions
+separate. Only declarations written in a nominal type are members of the type
+entity itself. Registered implementations belong to the program's evidence
+database, while extensions belong to lexical lookup context.
+
+A contextual reflection API may compute the methods callable for a type in a
+particular scope, but that synthesized set is not stored on the type and does
+not affect its identity.
+
+### 22.7 Explicitly open questions
+
+- Final spelling of implementation evidence types and canonical queries.
+- Final source-level registration API.
+- Exact ownership unit used by the canonical-registration coherence rule.
+- Syntax and semantics for registering implementation-provider functions.
+- Final extension namespace and scoped-import syntax.
+- Dynamic-dispatch representation, conversion, ownership, safety, and ABI.
+- Whether and how non-overridable (`final`) trait defaults are expressed.
+- Whether receiver adjustment ever grows beyond direct move, borrow, and
+  reborrow operations.
+- Interaction between trait solving, implementation providers, and the general
+  constraint/proof solver.
+
+---
+
+## 23. Suggested next design topic
 
 The next useful design pass should focus on the constraint/proof system and mixed-function semantics together.
 
@@ -1332,8 +2114,9 @@ where {
 ```text
 fn sum(comp T: type, values: []T) -> T
 where {
-    Add(T, T).Output == T;
-    Zero(T);
+    T implements Add(T);
+    impl(T, Add(T)).Output == T;
+    T implements Zero;
 }
 ```
 
@@ -1349,7 +2132,7 @@ Questions to resolve include:
 
 ---
 
-## 22. Instructions for future iteration
+## 24. Instructions for future iteration
 
 When iterating on this language design:
 
