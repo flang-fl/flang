@@ -5,6 +5,7 @@ use crate::semantic::Analyzer;
 use crate::source::{SourceFile, SourceFileManager, SourceId, Span};
 use crate::tokenizer::Tokenizer;
 use std::path::Path;
+use std::time::{Duration, Instant};
 use std::{env, fs};
 
 mod comptime;
@@ -15,6 +16,28 @@ mod semantic;
 pub mod source;
 pub mod tokenizer;
 mod toolchain;
+
+struct CompilationTimings {
+    tokenize: Duration,
+    parse: Duration,
+    semantic: Duration,
+    comptime: Duration,
+    llvm_ir: Duration,
+}
+
+impl CompilationTimings {
+    fn before_llvm(&self) -> Duration {
+        self.tokenize + self.parse + self.semantic + self.comptime
+    }
+
+    fn compiler_total(&self) -> Duration {
+        self.before_llvm() + self.llvm_ir
+    }
+}
+
+fn print_duration(label: &str, duration: Duration) {
+    eprintln!("{label:<24} {:>10.3} ms", duration.as_secs_f64() * 1000.0);
+}
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -38,7 +61,7 @@ fn main() {
         Err(diagnostics) => {
             diagnostics.print_diagnostics(&mut file_manager);
         }
-        Ok(llvm) => {
+        Ok((llvm, timings)) => {
             let source_path = Path::new(&file.name);
 
             let build_dir = source_path.parent().unwrap_or(Path::new(".")).join("build");
@@ -57,9 +80,25 @@ fn main() {
                 artifact_base.with_extension(env::consts::EXE_EXTENSION)
             };
 
-            match toolchain::build_executable(&llvm, &ir_path, &executable_path) {
+            let (build_exe_result, build_exe_time) =
+                measure(|| toolchain::build_executable(&llvm, &ir_path, &executable_path));
+
+            match build_exe_result {
                 Ok(()) => {
                     println!("built {}", executable_path.display());
+
+                    print_duration("Tokenization", timings.tokenize);
+                    print_duration("Parsing", timings.parse);
+                    print_duration("Semantic Analysis", timings.semantic);
+                    print_duration("Comptime Evaluation", timings.comptime);
+                    println!();
+                    print_duration("Compilation", timings.before_llvm());
+                    print_duration("LLVM Generation", timings.llvm_ir);
+                    print_duration("Total", timings.compiler_total());
+                    println!();
+                    print_duration("Clang", build_exe_time);
+                    print_duration("True Total", timings.compiler_total() + build_exe_time);
+                    println!();
                 }
 
                 Err(error) => {
@@ -70,35 +109,57 @@ fn main() {
     }
 }
 
-fn compile(source: &SourceFile) -> Result<String, Vec<Diagnostic>> {
-    let tokenizer = Tokenizer::new(&source);
-    let tokens = tokenizer.tokenize()?;
+fn measure<T>(operation: impl FnOnce() -> T) -> (T, Duration) {
+    let started = Instant::now();
+    let result = operation();
+    (result, started.elapsed())
+}
+
+fn compile(source: &SourceFile) -> Result<(String, CompilationTimings), Vec<Diagnostic>> {
+    let (tokens, tokenize_time) = measure(|| {
+        let tokenizer = Tokenizer::new(source);
+        tokenizer.tokenize()
+    });
+    let tokens = tokens?;
+
     println!("=== Tokens");
     for token in tokens.iter() {
         println!("  {token:?}");
     }
     println!();
 
-    let parser = Parser::new(&source, &tokens);
-    let ast = parser.parse()?;
+    let (ast, parse_time) = measure(|| {
+        let parser = Parser::new(&source, &tokens);
+        parser.parse()
+    });
+    let ast = ast?;
+
     println!("=== AST");
     println!("{ast:#?}");
     println!();
 
-    let analyzer = Analyzer::new(&source);
-    let typed_ast = analyzer.analyze(ast)?;
+    let (semantic_program, semantic_time) = measure(|| {
+        let analyzer = Analyzer::new(&source);
+        analyzer.analyze(ast)
+    });
+    let semantic_program = semantic_program?;
+
     println!("=== Typed AST");
-    println!("{typed_ast:#?}");
+    println!("{semantic_program:#?}");
     println!();
 
-    let compile_time_evaluator = Evaluator::new();
-    let evaluated = compile_time_evaluator.evaluate(typed_ast)?;
+    let (evaluated, comptime_time) = measure(|| {
+        let compile_time_evaluator = Evaluator::new();
+        compile_time_evaluator.evaluate(semantic_program)
+    });
+    let evaluated = evaluated?;
+
     println!("=== Compiletime Evaluated Program");
     println!("{evaluated:#?}");
     println!();
 
-    // let llvm = llvm::emit(&evaluated)?;
-    let llvm = llvm_inkwell::emit(&evaluated).map_err(|error| {
+    let (llvm_result, llvm_time) = measure(|| llvm_inkwell::emit(&evaluated));
+    let llvm = llvm_result.map_err(|error| {
         vec![Diagnostic::error(
             error,
             Span {
@@ -109,11 +170,21 @@ fn compile(source: &SourceFile) -> Result<String, Vec<Diagnostic>> {
             ":(",
         )]
     })?;
+
     println!("=== LLVM");
     println!("{llvm}");
     println!();
 
-    Ok(llvm)
+    Ok((
+        llvm,
+        CompilationTimings {
+            tokenize: tokenize_time,
+            parse: parse_time,
+            semantic: semantic_time,
+            comptime: comptime_time,
+            llvm_ir: llvm_time,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -125,7 +196,9 @@ mod tests {
 
         let id = sources.add_file("<test>".to_owned(), text.to_owned());
 
-        compile(sources.get_file(id))
+        let result = compile(sources.get_file(id));
+
+        result.map(|(compile, _time)| compile)
     }
 
     fn assert_compile_error(source: &str, expected: &str) {
@@ -393,7 +466,7 @@ mod tests {
                 return choose(false);
             };
             "#,
-            4
+            4,
         );
     }
 
