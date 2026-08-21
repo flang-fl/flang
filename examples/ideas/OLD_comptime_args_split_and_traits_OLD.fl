@@ -1,0 +1,46 @@
+comp Add = fn<
+    Self: type, // reserved identifier this is used specifically for trait providing functions
+                // inferred to be the "for" part, idk if I love this "magic syntax" still pondering it
+    Rhs: type,
+    _LCopy: impl(Copy, Lhs), // copy makes stuff copy on move so these don't need any explicit calling
+    _RCopy: impl(Copy, Rhs), // this just guarantees that they are implemented
+> {
+    return trait {
+        pub comp Result: type;
+        /* pub? */ comp _ResultCopy: impl(Copy, Result); // this is where inference becomes a tricky question
+                                              // can "local" comp bindings be inferred? Seems odd
+
+        pub comp add: fn(self: Self, rhs: Rhs) -> Result;
+    }
+}
+
+comp Add_i32_i64 = impl Add<i64> for i32 {
+    Result = i64;
+
+    add = fn(self: Self, rhs: i64) -> Result {
+        return (self as i64) + rhs;
+    }
+}
+
+comp { // do top level statements automatically sit inside a comp block?
+    @program.add_impl<
+        Add<i64>,       // trait (inferred in practice)
+        i32,            // target (also inferred)
+        Add_i32_i64     // impl
+    >;
+}
+
+comp add = fn<
+    A: type,
+    B: type,
+    Add: impl<Add<B>, A>,
+>(
+    a: A,
+    b: B,
+) -> Add.Result {
+    return Add.add(a, b);
+}
+
+comp main = fn() -> i64 {
+    return add(40_i32, 2_i64); // comptime params fully inferred
+}

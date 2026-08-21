@@ -1,0 +1,109 @@
+comp Clone = trait {
+    pub comp clone: fn(self: &Self) -> Self;
+}
+
+// Assume canonical Clone impls for i32 and i64 are registered.
+
+comp Add = fn<
+    Rhs: type,
+> -> trait {
+    return trait {
+        // overrideable
+        pub(impl) comp SelfClone: Impl<Self, Clone> = canonical;
+        pub(impl) comp RhsClone: Impl<Rhs, Clone> = canonical;
+
+        pub comp Result: type;
+
+        // non-overrideable, this bool is useless in practice but :)
+        final pub comp clones_inputs: bool = true;
+
+        pub comp add: fn(
+            self: &Self,
+            rhs: &Rhs,
+        ) -> Result;
+    }
+}
+
+// This impl uses the default clone impls
+comp Add_i32_i64 = impl Add<i64> for i32 {
+    Result = i64;
+
+    add = fn(self: &Self, rhs: &i64) -> Result {
+        let lhs = SelfClone.clone(self);
+        let rhs = RhsClone.clone(rhs);
+
+        return (lhs as i64) + rhs;
+    }
+}
+
+comp {
+    @program.add_impl<
+        Add<i64>,
+        i32,
+        Add_i32_i64,
+    >;
+}
+
+// Evil custom clone implementation
+comp CloneAdapter = fn<
+    T: type,
+    Inner: Impl<T, Clone>,
+>() -> Impl<T, Clone> {
+    return impl Clone for T {
+        clone = fn(self: &Self) -> Self {
+            return Inner.clone(self);
+        }
+    };
+}
+
+comp CustomI32Clone = CloneAdapter<
+    i32,
+    impl(i32, Clone),
+>;
+
+comp CustomI64Clone = CloneAdapter<
+    i64,
+    impl(i64, Clone),
+>;
+
+// uses custom clone impls
+comp CustomAdd_i32_i64 = impl Add<i64> for i32 {
+    SelfClone = CustomI32Clone;
+    RhsClone = CustomI64Clone;
+
+    Result = i64;
+
+    add = fn(self: &Self, rhs: &i64) -> Result {
+        let lhs = SelfClone.clone(self);
+        let rhs = RhsClone.clone(rhs);
+
+        return (lhs as i64) + rhs;
+    }
+}
+
+comp add_with = fn<
+    A: type,
+    B: type,
+    AddImpl: Impl<A, Add<B>>,
+>(
+    a: &A,
+    b: &B,
+) -> AddImpl.Result {
+    return AddImpl.add(a, b);
+}
+
+comp main = fn() -> i64 {
+    let a = 40_i32;
+    let b = 2_i64;
+
+    // AddImpl is inferred as the globally registered Add_i32_i64.
+    return add_with(&a, &b);
+}
+
+comp custom_main = fn() -> i64 {
+    let a = 40_i32;
+    let b = 2_i64;
+
+    // Custom AddImpl passed that also uses custom Clone impls
+    return add_with<i32, i64, CustomAdd_i32_i64>(&a, &b);
+}

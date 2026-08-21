@@ -1801,9 +1801,19 @@ pub comp Equality = trait {
 ```
 
 An uninitialized typed `comp` binding is a required associated member. An
-initialized member is an overridable default. `mut` retains its ordinary meaning
-of actual compile-time mutation and does not mean overridable. A possible
-`final` modifier for non-overridable defaults is deferred.
+initialized member is an overridable default. A `final` initialized member is a
+non-overridable default. This rule is uniform across associated types,
+functions, constants, implementation evidence, and other compile-time values:
+
+```text
+comp required: T;
+comp overridable: T = value;
+final comp fixed: T = value;
+```
+
+`final comp value: T;` is invalid because it would require an implementation to
+supply a member that it is forbidden to override. `mut` retains its ordinary
+meaning of actual compile-time mutation and does not mean overridable.
 
 Trait requirements may be associated types, functions, constants, or other
 compile-time values. Initial traits do not contain or structurally require
@@ -1815,6 +1825,26 @@ Trait members use ordinary visibility. A public trait member must be declared
 `pub`; private requirements and helpers can intentionally prevent external
 implementation and thereby support sealed traits. An implementation inherits
 the visibility declared by the trait rather than redeclaring it.
+
+The intermediate visibility `pub(impl)` exposes a member to the trait body and
+to bodies implementing that exact trait, but not to ordinary consumers of an
+implementation value. It applies uniformly to implementation inputs,
+customization hooks, helper functions, associated types, and other `comp`
+members:
+
+```text
+comp private_member: PrivateType;
+pub(impl) comp implementation_member: ImplementationType;
+pub comp public_member: PublicType;
+```
+
+The privileged implementation context is the implementation body itself, not
+the entire module containing it. A `pub(impl)` member may be initialized,
+overridden when it is not `final`, and used by an implementation body. It cannot
+be projected by ordinary consumer code. Code inside an implementation of the
+same trait may access such a member on another evidence value; this visibility
+boundary separates implementers from consumers rather than isolating
+implementations from one another.
 
 `Self`, captured trait-factory parameters, and previously introduced associated
 members are lexical names within the trait and implementation body. A
@@ -1847,20 +1877,61 @@ T implements Add(Rhs)
 ```
 
 The proposition can appear in `where` and `ensures` clauses or in a local
-`require` statement. A trait can require other evidence without inheriting or
-creating it:
+`require` statement. When a trait's implementation must select and retain a
+particular witness, that witness is an ordinary associated `comp` member rather
+than an implicit consequence of the proposition:
 
 ```text
 pub comp Ordered = trait {
-    require Self implements Equality;
+    pub(impl) comp EqualityImpl: Impl(Self, Equality);
 
     pub comp compare: fn(self: &Self, other: &Self) -> Ordering;
 };
 ```
 
-Constructing an `Ordered` implementation must prove the `Equality` proposition
-from canonical or explicit local evidence. It does not synthesize or register an
-`Equality` implementation.
+Every `Ordered` implementation explicitly supplies `EqualityImpl`, so custom
+unregistered evidence and canonical registered evidence are equally
+representable. The selected evidence is part of the implementation value and
+remains stable for its lifetime. It is not looked up again when `compare` is
+called.
+
+An evidence member may provide an overridable canonical default:
+
+```text
+pub(impl) comp EqualityImpl: Impl(Self, Equality)
+    = impl(Self, Equality);
+```
+
+In an expected implementation-evidence context, `canonical` is sugar for the
+same canonical query:
+
+```text
+pub(impl) comp EqualityImpl: Impl(Self, Equality) = canonical;
+```
+
+`canonical` requires an expected evidence type. Consequently the fully
+unannotated declaration `comp EqualityImpl = canonical;` is invalid, while an
+implementation assignment such as `EqualityImpl = canonical;` is valid because
+the trait member supplies the expected type. The query is resolved and captured
+when the enclosing implementation is constructed; it is not a live registry
+lookup.
+
+`final` can prevent contextual replacement without introducing a special kind
+of dependency member:
+
+```text
+final pub(impl) comp CopyImpl: Impl(Self, Copy) = canonical;
+```
+
+Whether some compiler-semantic traits such as `Copy` additionally require a
+distinct canonical-evidence type remains open. `final` fixes the member chosen
+by the trait author; it does not by itself change the type of evidence values.
+
+Evidence should be placed in the trait only when every implementation commits
+to that relationship. Evidence used solely by one implementation strategy is
+instead captured explicitly by an ordinary implementation-producing compile-
+time function. Passing evidence to an individual method is reserved for cases
+where the caller should be free to select different behavior on each call.
 
 Dynamic dispatch should eventually be supported through an explicit runtime
 representation. Its syntax, erasure rules, ownership behavior, object-safety
@@ -1881,9 +1952,11 @@ comp NumberAddI32 = impl Add(i32) for Number {
 };
 ```
 
-Every requirement without a default must be supplied explicitly. A same-named
-inherent function is never adopted automatically, but may be reused without
-duplicating its body:
+Every requirement without a default must be supplied explicitly. An initialized
+requirement may be replaced unless it is `final`. Supplying evidence, overriding
+a default function, and selecting an associated type are therefore instances of
+the same member-initialization mechanism. A same-named inherent function is
+never adopted automatically, but may be reused without duplicating its body:
 
 ```text
 comp equal = Number.equal;
@@ -2079,7 +2152,8 @@ not affect its identity.
 - Syntax and semantics for registering implementation-provider functions.
 - Final extension namespace and scoped-import syntax.
 - Dynamic-dispatch representation, conversion, ownership, safety, and ABI.
-- Whether and how non-overridable (`final`) trait defaults are expressed.
+- Whether compiler-semantic traits need a distinct canonical-evidence type in
+  addition to `final` members initialized with `canonical`.
 - Whether receiver adjustment ever grows beyond direct move, borrow, and
   reborrow operations.
 - Interaction between trait solving, implementation providers, and the general
