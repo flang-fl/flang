@@ -1,6 +1,6 @@
-use std::str::Chars;
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceFile, Span};
+use std::str::Chars;
 
 pub struct Tokenizer<'src> {
     source: &'src SourceFile,
@@ -52,7 +52,7 @@ impl<'src> Tokenizer<'src> {
             self.diagnostics.push(Diagnostic::error(
                 format!("Unexpected character '{next}'"),
                 self.source.span(self.index, self.index + 1),
-                "Evil :(".to_owned()
+                "Evil :(".to_owned(),
             ));
             self.next();
         }
@@ -66,21 +66,21 @@ impl<'src> Tokenizer<'src> {
 
     fn tokenize_identifier(&mut self) -> Result<Token, Diagnostic> {
         let start = self.index;
-        while let Some(next) = self.peek() && (next.is_ascii_alphanumeric() || next == '_') {
+        while let Some(next) = self.peek()
+            && (next.is_ascii_alphanumeric() || next == '_')
+        {
             self.next();
         }
 
         let span = self.source.span(start, self.index);
-        
-        let kind = if let Some(k) = 
-            Self::keyword(self.source.span_text(span)) { k } else {
+
+        let kind = if let Some(k) = Self::keyword(self.source.span_text(span)) {
+            k
+        } else {
             TokenKind::Identifier
         };
 
-        Ok(Token {
-            span,
-            kind,
-        })
+        Ok(Token { span, kind })
     }
 
     fn keyword(identifier: &str) -> Option<TokenKind> {
@@ -103,13 +103,43 @@ impl<'src> Tokenizer<'src> {
     fn tokenize_number_literal(&mut self) -> Result<Token, Diagnostic> {
         // TODO: Decimal Numbers
         let start = self.index;
-        while let Some(next) = self.peek() && next.is_ascii_digit() {
+        while let Some(next) = self.peek()
+            && next.is_ascii_digit()
+        {
             self.next();
         }
         Ok(Token {
             span: self.source.span(start, self.index),
-            kind: TokenKind::NumberLiteral
+            kind: TokenKind::NumberLiteral,
         })
+    }
+
+    fn single_or_double_tokens(
+        &mut self,
+        char1: char,
+        second_chars: &[char],
+        token1: TokenKind,
+        second_tokens: &[TokenKind],
+    ) -> Option<Token> {
+        let start = self.index;
+        if let Err(diagnostic) = self.expect(char1) {
+            self.diagnostics.push(diagnostic);
+            None
+        } else {
+            for (char, token) in second_chars.iter().zip(second_tokens) {
+                if self.peek() == Some(*char) {
+                    self.next();
+                    return Some(Token {
+                        span: self.source.span(start, self.index),
+                        kind: *token,
+                    });
+                }
+            }
+            Some(Token {
+                span: self.source.span(start, self.index),
+                kind: token1,
+            })
+        }
     }
 
     fn process_symbol_tokens(&mut self) -> Option<Token> {
@@ -126,86 +156,56 @@ impl<'src> Tokenizer<'src> {
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
 
-            '+' => TokenKind::Plus,
-            '-' => {
-                if self.peek_offset(1) == Some('>') {
-                    let start = self.index;
-                    self.next();
-                    self.next();
-                    let end = self.index;
-
-                    return Some(Token {
-                        span: self.source.span(start, end),
-                        kind: TokenKind::RArrow,
-                    });
-                }
-
-                TokenKind::Minus
+            '+' => {
+                return self.single_or_double_tokens(
+                    '+', &['='],
+                    TokenKind::Plus, &[TokenKind::PlusEq]
+                )
             }
-            '*' => TokenKind::Star,
-            '/' => TokenKind::Slash,
-
-            '=' => {
-                if self.peek_offset(1) == Some('=') {
-                    let start = self.index;
-                    self.next();
-                    self.next();
-                    let end = self.index;
-
-                    return Some(Token {
-                        span: self.source.span(start, end),
-                        kind: TokenKind::EqEq
-                    });
-                }
-                TokenKind::Eq
+            '-' => {
+                return self.single_or_double_tokens(
+                    '-', &['>', '='],
+                    TokenKind::Minus, &[TokenKind::RArrow, TokenKind::MinusEq]);
+            }
+            '*' => {
+                return self.single_or_double_tokens(
+                    '*', &['='],
+                    TokenKind::Star, &[TokenKind::StarEq]
+                )
+            },
+            '/' => {
+                return self.single_or_double_tokens(
+                    '/', &['='],
+                    TokenKind::Slash, &[TokenKind::SlashEq]
+                )
             },
 
+            '=' => {
+                return self.single_or_double_tokens(
+                    '=', &['='],
+                    TokenKind::Eq, &[TokenKind::EqEq]
+                );
+            }
+
             '!' => {
-                if self.peek_offset(1) == Some('=') {
-                    let start = self.index;
-                    self.next();
-                    self.next();
-                    let end = self.index;
-
-                    return Some(Token {
-                        span: self.source.span(start, end),
-                        kind: TokenKind::BangEq
-                    });
-                }
-
-                return None;
+                return self.single_or_double_tokens(
+                    '!', &['='],
+                    TokenKind::Bang, &[TokenKind::BangEq]
+                );
             }
 
             '<' => {
-                if self.peek_offset(1) == Some('=') {
-                    let start = self.index;
-                    self.next();
-                    self.next();
-                    let end = self.index;
-
-                    return Some(Token {
-                        span: self.source.span(start, end),
-                        kind: TokenKind::LessThanOrEqual
-                    });
-                }
-
-                TokenKind::LessThan
+                return self.single_or_double_tokens(
+                    '<', &['='],
+                    TokenKind::LessThan, &[TokenKind::LessThanOrEqual]
+                )
             }
 
             '>' => {
-                if self.peek_offset(1) == Some('=') {
-                    let start = self.index;
-                    self.next();
-                    self.next();
-                    let end = self.index;
-
-                    return Some(Token {
-                        span: self.source.span(start, end),
-                        kind: TokenKind::GreaterThanOrEqual
-                    });
-                }
-
-                TokenKind::GreaterThan
+                return self.single_or_double_tokens(
+                    '>', &['='],
+                    TokenKind::GreaterThan, &[TokenKind::GreaterThanOrEqual]
+                )
             }
 
             _ => return None,
@@ -229,6 +229,19 @@ impl<'src> Tokenizer<'src> {
 
     fn peek_offset(&self, offset: isize) -> Option<char> {
         self.chars.clone().nth(offset as usize)
+    }
+
+    fn expect(&mut self, char: char) -> Result<(), Diagnostic> {
+        if self.peek() == Some(char) {
+            self.next();
+            Ok(())
+        } else {
+            Err(Diagnostic::error(
+                format!("Expected `{}` but got `{:?}`", char, self.peek()),
+                self.source.span(self.index, self.index + 1),
+                "here",
+            ))
+        }
     }
 
     fn next(&mut self) -> Option<char> {
@@ -263,25 +276,30 @@ pub enum TokenKind {
     Return,
 
     // Symbols
-    Eq,
-    EqEq,
-    Semi,
-    Plus,
-    Star,
-    Minus,
-    Slash,
-    Comma,
-    Colon,
-    RArrow,
-    LCurly,
-    RCurly,
-    LParen,
-    RParen,
-    BangEq,
-    LessThan,
-    LessThanOrEqual,
-    GreaterThan,
-    GreaterThanOrEqual,
+    Eq,                 // =
+    EqEq,               // ==
+    Semi,               // ;
+    Plus,               // +
+    Star,               // *
+    Bang,               // !
+    Minus,              // -
+    Slash,              // /
+    Comma,              // ,
+    Colon,              // :
+    RArrow,             // ->
+    LCurly,             // {
+    RCurly,             // }
+    LParen,             // (
+    RParen,             // )
+    BangEq,             // !=
+    PlusEq,             // +=
+    StarEq,             // *=
+    MinusEq,            // -=
+    SlashEq,            // /=
+    LessThan,           // <
+    LessThanOrEqual,    // <=
+    GreaterThan,        // >
+    GreaterThanOrEqual, // >=
 
     // Special
     Identifier,

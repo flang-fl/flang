@@ -305,6 +305,14 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         let name = self.expect(TokenKind::Identifier, "Expected binding name after `let`")?;
 
+        let type_annotation = if self.peek_is(TokenKind::Colon) {
+            let _colon = self.expect(TokenKind::Colon, "Expected `:`")?;
+            let type_annotation = self.parse_type_expression()?;
+            Some(type_annotation)
+        } else {
+            None
+        };
+
         self.expect(TokenKind::Eq, "Expected `=` after binding name")?;
 
         let expression = self.parse_expression()?;
@@ -317,7 +325,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 phase: Phase::Runtime,
                 mutable,
                 name: name.span,
-                type_annotation: None, // todo
+                type_annotation, // todo
                 expression,
             }),
         })
@@ -365,7 +373,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                         data: StatementData::Assignment {
                             target: identifier.span,
                             expression,
-                        }
+                        },
                     })
                 } else {
                     let expression = self.parse_expression()?;
@@ -373,7 +381,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
                     Some(Statement {
                         span: self.source.fromto(expression.span, semi.span),
-                        data: StatementData::Expression(expression)
+                        data: StatementData::Expression(expression),
                     })
                 }
             }
@@ -393,7 +401,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             data: StatementData::While(While {
                 condition,
                 while_block: block,
-            })
+            }),
         })
     }
 
@@ -430,7 +438,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 condition,
                 then_block: body,
                 else_: else_if,
-            })
+            }),
         })
     }
 

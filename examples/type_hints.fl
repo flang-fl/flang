@@ -1,0 +1,10 @@
+comp main = fn() -> i64 {
+    let x: i64 = 5;
+    let tru: bool = true;
+
+    if tru {
+        return x;
+    } else {
+        return 42;
+    }
+};
