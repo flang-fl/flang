@@ -10,7 +10,7 @@ use crate::semantic::hir::{
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
 use crate::source::{SourceFile, Span};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub mod hir;
 pub mod symbols;
@@ -61,33 +61,26 @@ impl<'src> Analyzer<'src> {
 
         environment.define("bool".to_owned(), bool_id);
 
-        let print_i64_id = symbols.insert(Symbol {
-            name: "print_i64".to_owned(),
-            kind: SymbolKind::ExternFunction {
-                link_name: "flang_print_i64".to_owned(),
-            },
-            declaration_span: None,
-            type_: Type::Function {
-                parameters: vec![Type::I64],
-                return_type: Box::new(Type::Unit),
-            },
-        });
+        Self::register_external_function(
+            &mut symbols, &mut environment,
+            "print_i64", "flang_print_i64",
+            vec![Type::I64],
+            Type::Unit
+        );
 
-        environment.define("print_i64".to_owned(), print_i64_id);
+        Self::register_external_function(
+            &mut symbols, &mut environment,
+            "print_bool", "flang_print_bool",
+            vec![Type::Bool],
+            Type::Unit
+        );
 
-        let print_bool_id = symbols.insert(Symbol {
-            name: "print_bool".to_owned(),
-            kind: SymbolKind::ExternFunction {
-                link_name: "flang_print_bool".to_owned(),
-            },
-            declaration_span: None,
-            type_: Type::Function {
-                parameters: vec![Type::Bool],
-                return_type: Box::new(Type::Unit),
-            },
-        });
-
-        environment.define("print_bool".to_owned(), print_bool_id);
+        Self::register_external_function(
+            &mut symbols, &mut environment,
+            "read_byte", "flang_read_byte",
+            vec![],
+            Type::I64
+        );
 
         Self {
             source,
@@ -95,6 +88,36 @@ impl<'src> Analyzer<'src> {
             environment,
             diagnostics: Vec::new(),
         }
+    }
+
+    fn register_external_function(
+        symbols: &mut SymbolTable,
+        environment: &mut Environment,
+        name: impl Into<String>,
+        link_name: impl Into<String>,
+        parameters: Vec<Type>,
+        return_type: Type,
+    ) {
+        let name = name.into();
+        let link_name = link_name.into();
+
+        let symbol = Symbol {
+            name: name.clone(),
+            kind: SymbolKind::ExternFunction {
+                link_name
+            },
+            declaration_span: None,
+            type_: Type::Function {
+                parameters,
+                return_type: Box::new(return_type)
+            }
+        };
+
+        let symbol_id = symbols.insert(symbol);
+        environment.define(
+            name,
+            symbol_id
+        );
     }
 
     pub fn analyze(mut self, program: Program) -> Result<SemanticProgram, Vec<Diagnostic>> {

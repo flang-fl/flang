@@ -1,0 +1,51 @@
+comp plus = 43;
+comp minus = 45;
+comp multiply = 42;
+comp divide = 47;
+comp exit = 101;
+
+comp ret = 10;
+comp space = 32;
+
+comp next_non_whitespace = fn() -> i64 {
+    while true {
+        let byte = read_byte();
+        if byte != ret {
+            if byte != space {
+                return byte;
+            }
+        }
+    }
+
+    return 0;
+};
+
+comp digit_to_value = fn(byte: i64) -> i64 {
+    return byte - 48;
+};
+
+comp main = fn() -> i64 {
+    let mut running = true;
+    while running {
+        let mut lhs = next_non_whitespace();
+        if lhs == exit {
+            running = false;
+        } else {
+            lhs = digit_to_value(lhs);
+            let op = next_non_whitespace();
+            let rhs = digit_to_value(next_non_whitespace());
+
+            if op == plus {
+                print_i64(lhs + rhs);
+            } else if op == minus {
+                print_i64(lhs - rhs);
+            } else if op == multiply {
+                print_i64(lhs * rhs);
+            } else if op == divide {
+                print_i64(lhs / rhs);
+            }
+        }
+    }
+
+    return 0;
+};
