@@ -5,7 +5,7 @@ use crate::parser::ast::{
 };
 use crate::semantic::hir::{
     HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
-    HirParameter, HirProgram, HirStatement, HirStatementData,
+    HirParameter, HirPlace, HirPlaceData, HirProgram, HirStatement, HirStatementData,
 };
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
@@ -62,24 +62,30 @@ impl<'src> Analyzer<'src> {
         environment.define("bool".to_owned(), bool_id);
 
         Self::register_external_function(
-            &mut symbols, &mut environment,
-            "print_i64", "flang_print_i64",
+            &mut symbols,
+            &mut environment,
+            "print_i64",
+            "flang_print_i64",
             vec![Type::I64],
-            Type::Unit
+            Type::Unit,
         );
 
         Self::register_external_function(
-            &mut symbols, &mut environment,
-            "print_bool", "flang_print_bool",
+            &mut symbols,
+            &mut environment,
+            "print_bool",
+            "flang_print_bool",
             vec![Type::Bool],
-            Type::Unit
+            Type::Unit,
         );
 
         Self::register_external_function(
-            &mut symbols, &mut environment,
-            "read_byte", "flang_read_byte",
+            &mut symbols,
+            &mut environment,
+            "read_byte",
+            "flang_read_byte",
             vec![],
-            Type::I64
+            Type::I64,
         );
 
         Self {
@@ -103,21 +109,16 @@ impl<'src> Analyzer<'src> {
 
         let symbol = Symbol {
             name: name.clone(),
-            kind: SymbolKind::ExternFunction {
-                link_name
-            },
+            kind: SymbolKind::ExternFunction { link_name },
             declaration_span: None,
             type_: Type::Function {
                 parameters,
-                return_type: Box::new(return_type)
-            }
+                return_type: Box::new(return_type),
+            },
         };
 
         let symbol_id = symbols.insert(symbol);
-        environment.define(
-            name,
-            symbol_id
-        );
+        environment.define(name, symbol_id);
     }
 
     pub fn analyze(mut self, program: Program) -> Result<SemanticProgram, Vec<Diagnostic>> {
@@ -178,6 +179,119 @@ impl<'src> Analyzer<'src> {
         }
     }
 
+    fn analyze_place(&mut self, target: &Expression) -> Option<HirPlace> {
+        match &target.data {
+            ExpressionData::Name => {
+                let name = self.source.span_text(target.span);
+
+                let Some(symbol_id) = self.environment.lookup(name) else {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Unknown assignment target",
+                        target.span,
+                        format!("`{name}` is not defined"),
+                    ));
+
+                    return None;
+                };
+
+                let (type_, mutable) = {
+                    let symbol = self.symbols.get(symbol_id);
+
+                    (
+                        symbol.type_.clone(),
+                        matches!(symbol.kind, SymbolKind::Local { mutable: true }),
+                    )
+                };
+
+                if !mutable {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Cannot assign to immutable binding",
+                        target.span,
+                        format!("`{name}` is not mutable")
+                    ));
+                }
+
+                Some(HirPlace {
+                    span: target.span,
+                    type_,
+                    data: HirPlaceData::Symbol(symbol_id)
+                })
+            }
+
+            ExpressionData::Index { base, index } => {
+                let base_place = self.analyze_place(base)?;
+
+                let HirPlaceData::Symbol(array) = base_place.data else {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Unsupported assignment target",
+                        base.span,
+                        "nested indexed places are not supported yet"
+                    ));
+
+                    return None;
+                };
+
+                let Type::FixedArray {
+                    size: array_size,
+                    base_type,
+                } = base_place.type_ else {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Value is not indexable",
+                        base.span,
+                        "assignment target must be an array"
+                    ));
+
+                    return None;
+                };
+
+                let index = self.analyze_expression(
+                    index, Some(base_type.as_ref())
+                );
+
+                if index.type_ == Type::Error {
+                    return None;
+                }
+
+                if let HirExpressionData::Integer(index_value) = &index.data {
+                    let valid = usize::try_from(*index_value)
+                        .is_ok_and(|index| index < array_size);
+
+                    if !valid {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Array index out of bounds",
+                            index.span,
+                            format!(
+                                "array length is {array_size}, but the index is `{index_value}`"
+                            )
+                        ));
+
+                        return None;
+                    }
+                }
+
+                Some(HirPlace {
+                    span: target.span,
+                    type_: *base_type,
+                    data: HirPlaceData::Index {
+                        array,
+                        index,
+                        array_size
+                    }
+                })
+            }
+
+            _ => {
+                self.diagnostics.push(Diagnostic::error(
+                    "Invalid assignment target",
+                    target.span,
+                    "this expression does not identify writable storage"
+                ));
+
+                None
+            },
+        }
+    }
+
     fn analyze_binding(
         &mut self,
         binding: &Binding,
@@ -205,7 +319,22 @@ impl<'src> Analyzer<'src> {
     }
 
     fn resolve_type_expression(&mut self, expression: &TypeExpression) -> Type {
-        match expression.data {
+        match &expression.data {
+            TypeExpressionData::FixedArray { base_type, size } => {
+                let size = match &size.data {
+                    ExpressionData::IntegerLiteral => {
+                        self.source.span_text(size.span).parse().unwrap()
+                    }
+                    _ => {
+                        todo!("Unsupported expression for array type length")
+                    }
+                };
+
+                Type::FixedArray {
+                    base_type: Box::new(self.resolve_type_expression(base_type.as_ref())),
+                    size,
+                }
+            }
             TypeExpressionData::Unit => Type::Unit,
             TypeExpressionData::Identifier => {
                 let name = self.source.span_text(expression.span);
@@ -240,6 +369,123 @@ impl<'src> Analyzer<'src> {
         expected: Option<&Type>,
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::Index { base, index } => {
+                let base = self.analyze_expression(base, None);
+                let index = self.analyze_expression(index, Some(&Type::I64));
+
+                if base.type_ == Type::Error || index.type_ == Type::Error {
+                    return HirExpression::error(expression.span);
+                }
+
+                let (element_type, array_size) = match &base.type_ {
+                    Type::FixedArray { base_type, size } => (base_type.as_ref().clone(), *size),
+
+                    other => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Value is not indexable",
+                            base.span,
+                            format!("expected an array, found `{other:?}`"),
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                };
+
+                if let Some(expected) = expected {
+                    if *expected != Type::Error && *expected != element_type {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Type mismatch",
+                            expression.span,
+                            format!(
+                                "expected `{expected:?}`, but indexing this array produces `{element_type:?}`"
+                            )
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                }
+
+                if let HirExpressionData::Integer(index_value) = &index.data {
+                    let valid_index =
+                        usize::try_from(*index_value).is_ok_and(|index| index < array_size);
+
+                    if !valid_index {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Array index out of bounds",
+                            index.span,
+                            format!("array length is {array_size}, but the index is {index_value}"),
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                }
+
+                HirExpression {
+                    span: expression.span,
+                    type_: element_type,
+                    data: HirExpressionData::Index {
+                        base: Box::new(base),
+                        index: Box::new(index),
+                    },
+                }
+            }
+
+            ExpressionData::ArrayRepeatInitialization { value, size } => {
+                let amount: usize = match &size.as_ref().data {
+                    ExpressionData::IntegerLiteral => {
+                        self.source.span_text(size.span).parse().unwrap()
+                    }
+
+                    other => todo!("Unsupported expression for array init size"),
+                };
+
+                let base_type = if let Some(expected) = expected {
+                    match expected {
+                        Type::FixedArray { base_type, size } => {
+                            if *size != amount {
+                                self.diagnostics.push(Diagnostic::error(
+                                    "Array Length Mismatch",
+                                    expression.span,
+                                    format!(
+                                        "Expected Array of length {size} but got length {amount}"
+                                    ),
+                                ));
+                                return HirExpression::error(expression.span);
+                            }
+                            Some(base_type.as_ref())
+                        }
+
+                        other => {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Type mismatch",
+                                expression.span,
+                                format!(
+                                    "expected expression of type `{:?}` but got `{:?}`",
+                                    expected, other
+                                ),
+                            ));
+                            return HirExpression::error(expression.span);
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let value = self.analyze_expression(value.as_ref(), base_type);
+
+                HirExpression {
+                    span: expression.span,
+                    type_: Type::FixedArray {
+                        size: amount,
+                        base_type: Box::new(value.type_.clone()),
+                    },
+                    data: HirExpressionData::ArrayRepeatInitialization {
+                        amount,
+                        value: Box::new(value),
+                    },
+                }
+            }
+
             ExpressionData::Boolean(bool) => {
                 if let Some(expected) = expected {
                     if *expected != Type::Bool {
@@ -529,7 +775,7 @@ impl<'src> Analyzer<'src> {
                     self.diagnostics.push(Diagnostic::error(
                         "Identifier not yet bound",
                         expression.span,
-                        format!("Identifier {name} is not yet bound, in the future this will be allowed but rn stuff is evaluated top to bottom")
+                        format!("Identifier {name} is not yet bound, in the future this will be allowed but rn stuff is evaluated top to bottom"),
                     ));
                     return HirExpression::error(expression.span);
                 }
@@ -547,7 +793,7 @@ impl<'src> Analyzer<'src> {
                                 expected_type, actual_type
                             ),
                             expression.span,
-                            format!("Should be of type `{:?}`", expected_type)
+                            format!("Should be of type `{:?}`", expected_type),
                         ));
 
                         return HirExpression::error(expression.span);
@@ -592,44 +838,15 @@ impl<'src> Analyzer<'src> {
             }
 
             StatementData::Assignment { target, expression } => {
-                let name = self.source.span_text(*target);
-
-                let Some(symbol_id) = self.environment.lookup(name) else {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Unknown assignment target",
-                        *target,
-                        format!("`{name}` is not defined"),
-                    ));
-
-                    return HirStatement::error(*target);
-                };
-
-                let (target_type, mutable) = {
-                    let symbol = self.symbols.get(symbol_id);
-
-                    let mutable = matches!(symbol.kind, SymbolKind::Local { mutable: true });
-
-                    (symbol.type_.clone(), mutable)
-                };
-
-                let expression = self.analyze_expression(expression, Some(&target_type));
-
-                if !mutable {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Cannot assign to immutable binding",
-                        *target,
-                        format!("`{name}` is not mutable"),
-                    ));
-
+                let Some(target) = self.analyze_place(target) else {
                     return HirStatement::error(statement.span);
-                }
+                };
+
+                let expression = self.analyze_expression(expression, Some(&target.type_));
 
                 HirStatement {
                     span: statement.span,
-                    data: HirStatementData::Assignment {
-                        symbol: symbol_id,
-                        expression,
-                    },
+                    data: HirStatementData::Assignment { target, expression },
                 }
             }
 

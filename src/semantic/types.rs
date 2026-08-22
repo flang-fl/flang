@@ -3,6 +3,10 @@ pub enum Type {
     I64,
     Bool,
     Unit,
+    FixedArray {
+        size: usize,
+        base_type: Box<Type>,
+    },
     Function {
         parameters: Vec<Type>,
         return_type: Box<Type>,

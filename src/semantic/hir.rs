@@ -9,6 +9,24 @@ pub struct HirProgram {
 }
 
 #[derive(Debug, Clone)]
+pub struct HirPlace {
+    pub span: Span,
+    pub type_: Type,
+    pub data: HirPlaceData
+}
+
+#[derive(Debug, Clone)]
+pub enum HirPlaceData {
+    Symbol(SymbolId),
+    
+    Index {
+        array: SymbolId,
+        index: HirExpression,
+        array_size: usize,
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct HirItem {
     pub span: Span,
     pub data: HirItemData,
@@ -59,6 +77,14 @@ pub enum HirExpressionData {
     Call {
         callee: Box<HirExpression>,
         arguments: Vec<HirExpression>,
+    },
+    ArrayRepeatInitialization {
+        value: Box<HirExpression>,
+        amount: usize,
+    },
+    Index {
+        base: Box<HirExpression>,
+        index: Box<HirExpression>,
     },
     Error,
 }
@@ -122,7 +148,7 @@ pub enum HirStatementData {
         while_block: HirBlock
     },
     Assignment {
-        symbol: SymbolId,
+        target: HirPlace,
         expression: HirExpression,
     },
     Expression(HirExpression),

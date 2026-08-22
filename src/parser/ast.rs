@@ -51,6 +51,14 @@ pub enum ExpressionData {
     Call {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
+    },
+    ArrayRepeatInitialization {
+        value: Box<Expression>,
+        size: Box<Expression>,
+    },
+    Index {
+        base: Box<Expression>,
+        index: Box<Expression>
     }
 }
 
@@ -103,6 +111,10 @@ pub struct TypeExpression {
 #[derive(Debug, Clone)]
 pub enum TypeExpressionData {
     Identifier,
+    FixedArray {
+        size: Box<Expression>,
+        base_type: Box<TypeExpression>,
+    },
     Unit
 }
 
@@ -123,7 +135,7 @@ pub enum StatementData {
     Return(Option<Expression>),
     Binding(Binding),
     Assignment {
-        target: Span,
+        target: Expression,
         expression: Expression,
     },
     If(If),

@@ -152,6 +152,8 @@ impl<'src> Tokenizer<'src> {
             ')' => TokenKind::RParen,
             '{' => TokenKind::LCurly,
             '}' => TokenKind::RCurly,
+            '[' => TokenKind::LBrack,
+            ']' => TokenKind::RBrack,
             ';' => TokenKind::Semi,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
@@ -291,6 +293,8 @@ pub enum TokenKind {
     RCurly,             // }
     LParen,             // (
     RParen,             // )
+    LBrack,             // [
+    RBrack,             // ]
     BangEq,             // !=
     PlusEq,             // +=
     StarEq,             // *=

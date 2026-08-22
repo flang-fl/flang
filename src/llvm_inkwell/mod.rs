@@ -1,7 +1,8 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue, EvaluatedProgram, FunctionId};
 use crate::parser::ast::BinaryOperator;
 use crate::semantic::hir::{
-    HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirStatement, HirStatementData,
+    HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirPlace, HirPlaceData,
+    HirStatement, HirStatementData,
 };
 use crate::semantic::symbols::{SymbolId, SymbolKind};
 use crate::semantic::types::Type;
@@ -9,7 +10,7 @@ use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::types::{BasicMetadataTypeEnum, IntType};
+use inkwell::types::{ArrayType, BasicMetadataTypeEnum, BasicType, IntType};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
 use std::collections::HashMap;
 
@@ -36,6 +37,11 @@ type Operands<'ctx> = HashMap<SymbolId, LocalOperand<'ctx>>;
 enum LocalOperand<'ctx> {
     Value(IntValue<'ctx>),
     Mutable(PointerValue<'ctx>),
+
+    Array {
+        pointer: PointerValue<'ctx>,
+        llvm_type: ArrayType<'ctx>,
+    },
 }
 
 pub struct CodeGenerator<'ctx, 'program> {
@@ -67,46 +73,33 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
             let Type::Function {
                 parameters,
-                return_type
-            } = &symbol.type_ else {
-                return Err(
-                    "external function symbol does not have a function type".to_owned()
-                );
+                return_type,
+            } = &symbol.type_
+            else {
+                return Err("external function symbol does not have a function type".to_owned());
             };
 
             let parameter_types = parameters
                 .iter()
-                .map(|parameter| {
-                    self.llvm_int_type(parameter).map(Into::into)
-                })
+                .map(|parameter| self.llvm_int_type(parameter).map(Into::into))
                 .collect::<Result<Vec<BasicMetadataTypeEnum>, String>>()?;
 
             let function_type = match return_type.as_ref() {
-                Type::I64 | Type::Bool => {
-                    self.llvm_int_type(return_type)?
-                        .fn_type(&parameter_types, false)
-                }
+                Type::I64 | Type::Bool => self
+                    .llvm_int_type(return_type)?
+                    .fn_type(&parameter_types, false),
 
-                Type::Unit => {
-                    self.context
-                        .void_type()
-                        .fn_type(&parameter_types, false)
-                }
+                Type::Unit => self.context.void_type().fn_type(&parameter_types, false),
 
                 unsupported => {
-                    return Err(format!(
-                        "unsupported external return type {unsupported:?}"
-                    ));
+                    return Err(format!("unsupported external return type {unsupported:?}"));
                 }
             };
 
-            let llvm_function =
-            self.module.add_function(link_name, function_type, None);
+            let llvm_function = self.module.add_function(link_name, function_type, None);
 
-            self.external_functions.insert(
-                SymbolId(index as u32),
-                llvm_function
-            );
+            self.external_functions
+                .insert(SymbolId(index as u32), llvm_function);
         }
 
         Ok(())
@@ -286,6 +279,60 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         Ok(EmitFlow::Continues)
     }
 
+    fn emit_place(
+        &self,
+        place: &HirPlace,
+        operands: &Operands<'ctx>,
+    ) -> Result<PointerValue<'ctx>, String> {
+        match &place.data {
+            HirPlaceData::Symbol(symbol) => match operands.get(symbol) {
+                Some(LocalOperand::Mutable(pointer)) => Ok(*pointer),
+
+                _ => Err("symbol place does not have mutable LLVM storage".to_owned()),
+            },
+
+            HirPlaceData::Index {
+                array,
+                index,
+                array_size,
+            } => {
+                self.emit_array_element_pointer(
+                    *array,
+                    index,
+                    *array_size,
+                    operands,
+                )
+            }
+        }
+    }
+
+    fn emit_array_element_pointer(
+        &self,
+        array: SymbolId,
+        index: &HirExpression,
+        array_size: usize,
+        operands: &Operands<'ctx>,
+    ) -> Result<PointerValue<'ctx>, String> {
+        let Some(LocalOperand::Array { pointer, llvm_type }) = operands.get(&array) else {
+            return Err("array has no local LLVM storage".to_owned());
+        };
+
+        let index = self.emit_expression(index, operands)?;
+
+        self.emit_array_bounds_check(index, array_size)?;
+
+        let zero = self.context.i64_type().const_zero();
+
+        unsafe {
+            self.builder.build_gep(
+                *llvm_type,
+                *pointer,
+                &[zero, index],
+                "array.element.ptr"
+            )
+        }.map_err(|error| error.to_string())
+    }
+
     fn emit_statement(
         &mut self,
         statement: &HirStatement,
@@ -295,35 +342,25 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             HirStatementData::Error => Err("Evil".to_owned()),
 
             HirStatementData::Expression(expression) => {
-                let HirExpressionData::Call {
-                    callee,
-                    arguments,
-                } = &expression.data else {
-                    return Err(
-                        "unsupported unit expression statement".to_owned()
-                    );
+                let HirExpressionData::Call { callee, arguments } = &expression.data else {
+                    return Err("unsupported unit expression statement".to_owned());
                 };
 
                 let value = self.emit_call(operands, callee, arguments)?;
 
                 if value.is_some() {
-                    return Err(
-                        "value-producing expression used as a unit statement".to_owned()
-                    );
+                    return Err("value-producing expression used as a unit statement".to_owned());
                 }
 
                 Ok(EmitFlow::Continues)
             }
 
-            HirStatementData::Assignment { symbol, expression } => {
+            HirStatementData::Assignment { target, expression } => {
+                let pointer = self.emit_place(target, operands)?;
                 let value = self.emit_expression(expression, operands)?;
 
-                let Some(LocalOperand::Mutable(pointer)) = operands.get(symbol) else {
-                    return Err("assignment target is not a mutable LLVM local".to_owned());
-                };
-
                 self.builder
-                    .build_store(*pointer, value)
+                    .build_store(pointer, value)
                     .map_err(|error| error.to_string())?;
 
                 Ok(EmitFlow::Continues)
@@ -409,7 +446,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
             HirStatementData::While {
                 condition,
-                while_block
+                while_block,
             } => {
                 let llvm_function = self
                     .builder
@@ -421,13 +458,9 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     .context
                     .append_basic_block(llvm_function, "while.condition");
 
-                let body_bb = self
-                    .context
-                    .append_basic_block(llvm_function, "while.body");
+                let body_bb = self.context.append_basic_block(llvm_function, "while.body");
 
-                let end_bb = self
-                    .context
-                    .append_basic_block(llvm_function, "while.end");
+                let end_bb = self.context.append_basic_block(llvm_function, "while.end");
 
                 self.builder
                     .build_unconditional_branch(condition_bb)
@@ -455,9 +488,17 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 self.builder.position_at_end(end_bb);
 
                 Ok(EmitFlow::Continues)
-            },
+            }
 
             HirStatementData::Binding { symbol, expression } => {
+                if matches!(
+                    expression.data,
+                    HirExpressionData::ArrayRepeatInitialization { .. }
+                ) {
+                    self.emit_zero_array_binding(*symbol, expression, operands)?;
+                    return Ok(EmitFlow::Continues);
+                }
+
                 let value = self.emit_expression(expression, &operands)?;
                 let symbol_info = self.program.symbols.get(*symbol);
 
@@ -509,12 +550,47 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         operands: &Operands<'ctx>,
     ) -> Result<IntValue<'ctx>, String> {
         match &expression.data {
+            HirExpressionData::Index { base, index } => {
+                let HirExpressionData::Symbol(symbol) = &base.data else {
+                    return Err("only local arrays can currently be indexed".to_owned());
+                };
+
+                let Type::FixedArray { size, .. } = &base.type_ else {
+                    return Err("index base lost its array type".to_owned());
+                };
+
+                let element_pointer = self.emit_array_element_pointer(
+                    *symbol,
+                    index,
+                    *size,
+                    operands
+                )?;
+
+                let element_type = self.llvm_int_type(&expression.type_)?;
+
+                let element = self
+                    .builder
+                    .build_load(element_type, element_pointer, "array.element")
+                    .map_err(|error| error.to_string())?
+                    .into_int_value();
+
+                Ok(element)
+            }
+
+            HirExpressionData::ArrayRepeatInitialization { .. } => {
+                unreachable!()
+            }
+
             HirExpressionData::Integer(value) => {
                 Ok(self.context.i64_type().const_int(*value as u64, true))
             }
 
             HirExpressionData::Symbol(symbol_id) => {
                 match operands.get(symbol_id) {
+                    Some(LocalOperand::Array { llvm_type, pointer }) => {
+                        todo!("IDK what to do here #001");
+                    }
+
                     Some(LocalOperand::Value(value)) => {
                         return Ok(*value);
                     }
@@ -595,10 +671,9 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 Ok(result)
             }
 
-            HirExpressionData::Call { callee, arguments } => {
-                self.emit_call(operands, callee, arguments)?
-                    .ok_or_else(|| "unit-returning call used as a value".to_owned())
-            }
+            HirExpressionData::Call { callee, arguments } => self
+                .emit_call(operands, callee, arguments)?
+                .ok_or_else(|| "unit-returning call used as a value".to_owned()),
 
             HirExpressionData::Bool(bool) => {
                 Ok(self.context.bool_type().const_int(u64::from(*bool), false))
@@ -608,6 +683,67 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 Err("expression is not supported by Inkwell backend yet".to_owned())
             }
         }
+    }
+
+    fn emit_array_bounds_check(
+        &self,
+        index: IntValue<'ctx>,
+        array_size: usize,
+    ) -> Result<(), String> {
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .ok_or_else(|| "bounds check emitted outside a block".to_owned())?;
+
+        let function = current_block
+            .get_parent()
+            .ok_or_else(|| "bounds check emitted outside a function".to_owned())?;
+
+        let valid_block = self.context.append_basic_block(function, "index.valid");
+
+        let invalid_block = self.context.append_basic_block(function, "index.invalid");
+
+        let i64_type = self.context.i64_type();
+        let zero = i64_type.const_zero();
+        let length = i64_type.const_int(array_size as u64, false);
+
+        let nonnegative = self
+            .builder
+            .build_int_compare(IntPredicate::SGE, index, zero, "index.nonnegative")
+            .map_err(|error| error.to_string())?;
+
+        let below_length = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, index, length, "index.below_length")
+            .map_err(|error| error.to_string())?;
+
+        let valid = self
+            .builder
+            .build_and(nonnegative, below_length, "index.in_bounds")
+            .map_err(|error| error.to_string())?;
+
+        self.builder
+            .build_conditional_branch(valid, valid_block, invalid_block)
+            .map_err(|error| error.to_string())?;
+
+        self.builder.position_at_end(invalid_block);
+
+        let trap = self.module.get_function("llvm.trap").unwrap_or_else(|| {
+            let trap_type = self.context.void_type().fn_type(&[], false);
+            self.module.add_function("llvm.trap", trap_type, None)
+        });
+
+        self.builder
+            .build_call(trap, &[], "")
+            .map_err(|error| error.to_string())?;
+
+        self.builder
+            .build_unreachable()
+            .map_err(|error| error.to_string())?;
+
+        self.builder.position_at_end(valid_block);
+
+        Ok(())
     }
 
     fn emit_call(
@@ -643,7 +779,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         let HirExpressionData::Symbol(symbol_id) = &callee.data else {
             return Err("Inkwell backend only supports statically known callees rn".to_owned());
         };
-        
+
         if let Some(function) = self.external_functions.get(symbol_id) {
             return Ok(*function);
         }
@@ -660,12 +796,62 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         })
     }
 
+    fn emit_zero_array_binding(
+        &mut self,
+        symbol: SymbolId,
+        expression: &HirExpression,
+        operands: &mut Operands<'ctx>,
+    ) -> Result<(), String> {
+        let HirExpressionData::ArrayRepeatInitialization { value, .. } = &expression.data else {
+            return Err("expected array repeat initializer".to_owned());
+        };
+
+        let HirExpressionData::Integer(0) = value.data else {
+            return Err("only `[0; N]` array initialization is supported for now".to_owned());
+        };
+
+        let symbol_info = self.program.symbols.get(symbol);
+        let array_type = self.llvm_array_type(&expression.type_)?;
+
+        let pointer = self
+            .builder
+            .build_alloca(array_type, &symbol_info.name)
+            .map_err(|error| error.to_string())?;
+
+        self.builder
+            .build_store(pointer, array_type.const_zero())
+            .map_err(|error| error.to_string())?;
+
+        operands.insert(
+            symbol,
+            LocalOperand::Array {
+                pointer,
+                llvm_type: array_type,
+            },
+        );
+
+        Ok(())
+    }
+
     fn llvm_int_type(&self, type_: &Type) -> Result<IntType<'ctx>, String> {
         match type_ {
             Type::I64 => Ok(self.context.i64_type()),
             Type::Bool => Ok(self.context.bool_type()),
             _ => Err(format!("unsupported LLVM value type: {type_:?}")),
         }
+    }
+
+    fn llvm_array_type(&self, type_: &Type) -> Result<ArrayType<'ctx>, String> {
+        let Type::FixedArray { size, base_type } = type_ else {
+            return Err(format!("expected fixed array type, found {type_:?}"));
+        };
+
+        let size = u32::try_from(*size)
+            .map_err(|_| "array length does not fit in LLVM's array length".to_owned())?;
+
+        let element_type = self.llvm_int_type(base_type)?;
+
+        Ok(element_type.array_type(size))
     }
 }
 

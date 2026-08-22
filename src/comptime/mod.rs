@@ -1,7 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::{BinaryOperator, Phase};
 use crate::semantic::SemanticProgram;
-use crate::semantic::hir::{HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirProgram, HirStatement, HirStatementData};
+use crate::semantic::hir::{HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirPlaceData, HirProgram, HirStatement, HirStatementData};
 use crate::semantic::symbols::{SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::Type;
 use std::cmp::PartialEq;
@@ -114,28 +114,40 @@ impl Evaluator {
                 }
             }
 
-            HirStatementData::Assignment {
-                symbol,
-                expression
-            } => {
+            HirStatementData::Assignment { target, expression } => {
                 let value = self.evaluate_expression(expression, symbols);
 
                 if value == ComptimeValue::Error {
                     return EvaluationFlow::Error;
                 }
 
-                let frame = self.frames
+                let frame = self
+                    .frames
                     .last_mut()
                     .expect("assignment requires a function call frame");
 
-                let Some(slot) = frame.get_mut(symbol) else {
-                    panic!("HIR invariant was violated: the local should have been bound earlier");
-                };
+                match &target.data {
+                    HirPlaceData::Symbol(symbol) => {
+                        let Some(slot) = frame.get_mut(symbol) else {
+                            panic!("HIR invariant was violated: the local should have been bound earlier");
+                        };
 
-                *slot = value;
+                        *slot = value;
+                    }
+                    
+                    HirPlaceData::Index { .. } => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Arrays are not supported at compile time right now",
+                            statement.span,
+                            ":("
+                        ));
+                            
+                        return EvaluationFlow::Error;
+                    }
+                }
 
                 EvaluationFlow::Continue
-            },
+            }
 
             HirStatementData::Binding { symbol, expression } => {
                 let value = self.evaluate_expression(expression, symbols);
@@ -156,75 +168,63 @@ impl Evaluator {
                 EvaluationFlow::Return(self.evaluate_expression(expression, symbols))
             }
 
-            HirStatementData::Return(None) => {
-                EvaluationFlow::Return(ComptimeValue::Unit)
-            },
+            HirStatementData::Return(None) => EvaluationFlow::Return(ComptimeValue::Unit),
 
             HirStatementData::While {
                 condition,
-                while_block
-            } => {
-                loop {
-                    match self.evaluate_expression(condition, symbols) {
-                        ComptimeValue::Bool(false) => {
-                            return EvaluationFlow::Continue;
-                        }
-
-                        ComptimeValue::Bool(true) => {}
-
-                        ComptimeValue::Error => {
-                            return EvaluationFlow::Error;
-                        }
-
-                        _ => {
-                            self.diagnostics.push(Diagnostic::error(
-                                "Internal Compiler Error",
-                                condition.span,
-                                "not a boolean expression"
-                            ));
-                            return EvaluationFlow::Error;
-                        }
+                while_block,
+            } => loop {
+                match self.evaluate_expression(condition, symbols) {
+                    ComptimeValue::Bool(false) => {
+                        return EvaluationFlow::Continue;
                     }
 
-                    match self.evaluate_block(while_block, symbols) {
-                        EvaluationFlow::Continue => {
+                    ComptimeValue::Bool(true) => {}
 
-                        }
+                    ComptimeValue::Error => {
+                        return EvaluationFlow::Error;
+                    }
 
-                        EvaluationFlow::Return(value) => {
-                            return EvaluationFlow::Return(value);
-                        }
-
-                        EvaluationFlow::Error => {
-                            return EvaluationFlow::Error;
-                        }
+                    _ => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Internal Compiler Error",
+                            condition.span,
+                            "not a boolean expression",
+                        ));
+                        return EvaluationFlow::Error;
                     }
                 }
-            }
+
+                match self.evaluate_block(while_block, symbols) {
+                    EvaluationFlow::Continue => {}
+
+                    EvaluationFlow::Return(value) => {
+                        return EvaluationFlow::Return(value);
+                    }
+
+                    EvaluationFlow::Error => {
+                        return EvaluationFlow::Error;
+                    }
+                }
+            },
 
             HirStatementData::If {
                 condition,
                 then_block,
-                else_branch
+                else_branch,
             } => {
                 let condition = self.evaluate_expression(condition, symbols);
 
                 match condition {
-                    ComptimeValue::Bool(true) => {
-                        self.evaluate_block(then_block, symbols)
-                    }
-                    ComptimeValue::Bool(false) => {
-                        match else_branch {
-                            Some(HirElseBranch::Else(block)) => {
-                                self.evaluate_block(block, symbols)
-                            }
-                            Some(HirElseBranch::ElseIf(statement)) => {
-                                self.evaluate_statement(statement, symbols)
-                            }
-
-                            None => EvaluationFlow::Continue,
+                    ComptimeValue::Bool(true) => self.evaluate_block(then_block, symbols),
+                    ComptimeValue::Bool(false) => match else_branch {
+                        Some(HirElseBranch::Else(block)) => self.evaluate_block(block, symbols),
+                        Some(HirElseBranch::ElseIf(statement)) => {
+                            self.evaluate_statement(statement, symbols)
                         }
-                    }
+
+                        None => EvaluationFlow::Continue,
+                    },
 
                     ComptimeValue::Error => EvaluationFlow::Error,
 
@@ -237,11 +237,7 @@ impl Evaluator {
         }
     }
 
-    fn evaluate_block(
-        &mut self,
-        block: &HirBlock,
-        symbols: &SymbolTable,
-    ) -> EvaluationFlow {
+    fn evaluate_block(&mut self, block: &HirBlock, symbols: &SymbolTable) -> EvaluationFlow {
         for statement in block.statements.iter() {
             match self.evaluate_statement(statement, symbols) {
                 EvaluationFlow::Continue => {}
@@ -258,6 +254,17 @@ impl Evaluator {
         symbols: &SymbolTable,
     ) -> ComptimeValue {
         match &expression.data {
+            HirExpressionData::Index { .. }
+            | HirExpressionData::ArrayRepeatInitialization { .. } => {
+                self.diagnostics.push(Diagnostic::error(
+                    "Arrays are currently unsupported in comptime",
+                    expression.span,
+                    ":(",
+                ));
+
+                ComptimeValue::Error
+            }
+
             HirExpressionData::Bool(bool) => ComptimeValue::Bool(*bool),
 
             HirExpressionData::Function(function) => {
@@ -523,10 +530,7 @@ impl Evaluator {
         symbols: &SymbolTable,
     ) -> ComptimeValue {
         for statement in function.body.statements.iter() {
-            let flow = self.evaluate_statement(
-                statement,
-                symbols,
-            );
+            let flow = self.evaluate_statement(statement, symbols);
 
             match flow {
                 EvaluationFlow::Continue => continue,

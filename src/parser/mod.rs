@@ -1,6 +1,10 @@
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData, While};
+use crate::parser::ast::{
+    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
+    Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression,
+    TypeExpressionData, While,
+};
 use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
 use std::cmp::min;
@@ -106,11 +110,31 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     fn parse_postfix_expression(&mut self) -> Option<Expression> {
         let mut expression = self.parse_primary()?;
 
-        while self.peek_is(TokenKind::LParen) {
-            expression = self.parse_call_expression(expression)?;
+        loop {
+            if self.peek_is(TokenKind::LParen) {
+                expression = self.parse_call_expression(expression)?;
+            } else if self.peek_is(TokenKind::LBrack) {
+                expression = self.parse_index_expression(expression)?;
+            } else {
+                break;
+            }
         }
 
         Some(expression)
+    }
+
+    fn parse_index_expression(&mut self, base: Expression) -> Option<Expression> {
+        self.expect(TokenKind::LBrack, "Expected `[`")?;
+        let index = self.parse_expression()?;
+        let r_brack = self.expect(TokenKind::RBrack, "Expected `]`")?;
+        
+        Some(Expression {
+            span: self.source.fromto(base.span, r_brack.span),
+            data: ExpressionData::Index {
+                base: Box::new(base),
+                index: Box::new(index),
+            }
+        })
     }
 
     fn parse_call_expression(&mut self, callee: Expression) -> Option<Expression> {
@@ -174,6 +198,23 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_primary(&mut self) -> Option<Expression> {
+        // [0; 50]
+        if self.peek_is(TokenKind::LBrack) {
+            let l_brack = self.expect(TokenKind::LBrack, "Expected `[`")?;
+            let value = self.parse_expression()?;
+            self.expect(TokenKind::Semi, "Expected `;`")?;
+            let count = self.parse_expression()?;
+            let r_brack = self.expect(TokenKind::RBrack, "Expected `]`")?;
+
+            return Some(Expression {
+                span: self.source.fromto(l_brack.span, r_brack.span),
+                data: ExpressionData::ArrayRepeatInitialization {
+                    value: Box::new(value),
+                    size: Box::new(count),
+                },
+            });
+        }
+
         if self.peek_is(TokenKind::True) {
             let true_ = self.expect(TokenKind::True, "Expected `true`")?;
             return Some(Expression {
@@ -269,6 +310,22 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_type_expression(&mut self) -> Option<TypeExpression> {
+        if self.peek_is(TokenKind::LBrack) {
+            let l_brack = self.expect(TokenKind::LBrack, "Expected `[`")?;
+            let size = self.parse_expression()?;
+            self.expect(TokenKind::RBrack, "Expected `]`")?;
+
+            let base_type = self.parse_type_expression()?;
+
+            return Some(TypeExpression {
+                span: self.source.fromto(l_brack.span, base_type.span),
+                data: TypeExpressionData::FixedArray {
+                    size: Box::new(size),
+                    base_type: Box::new(base_type),
+                },
+            });
+        }
+
         let identifier = self.expect(TokenKind::Identifier, "Expected Type")?;
         Some(TypeExpression {
             span: identifier.span,
@@ -359,29 +416,27 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             Some(TokenKind::While) => self.parse_while_statement(),
             Some(TokenKind::If) => self.parse_if_statement(),
             Some(TokenKind::Identifier) => {
-                if self.peek_offset_is(1, TokenKind::Eq) {
-                    let identifier = self.expect(TokenKind::Identifier, "Expected identifier")?;
+                let target_or_expression = self.parse_expression()?;
+                
+                if self.peek_is(TokenKind::Eq) {
+                    self.expect(TokenKind::Eq, "Expected `=` for assignment")?;
 
-                    let _ = self.expect(TokenKind::Eq, "Expected `=` for assignment")?;
-
-                    let expression = self.parse_expression()?;
-
+                    let value = self.parse_expression()?;
                     let semi = self.expect(TokenKind::Semi, "Expected `;` after assignment")?;
 
                     Some(Statement {
-                        span: self.source.fromto(identifier.span, semi.span),
+                        span: self.source.fromto(target_or_expression.span, semi.span),
                         data: StatementData::Assignment {
-                            target: identifier.span,
-                            expression,
+                            target: target_or_expression,
+                            expression: value,
                         },
                     })
                 } else {
-                    let expression = self.parse_expression()?;
                     let semi = self.expect(TokenKind::Semi, "Expected `;` after assignment")?;
 
                     Some(Statement {
-                        span: self.source.fromto(expression.span, semi.span),
-                        data: StatementData::Expression(expression),
+                        span: self.source.fromto(target_or_expression.span, semi.span),
+                        data: StatementData::Expression(target_or_expression),
                     })
                 }
             }
@@ -416,17 +471,11 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             if self.peek_is(TokenKind::If) {
                 let else_if = self.parse_if_statement()?;
                 let span = else_if.span;
-                (
-                    Some(ElseBranch::ElseIf(Box::new(else_if))),
-                    span,
-                )
+                (Some(ElseBranch::ElseIf(Box::new(else_if))), span)
             } else {
                 let body = self.parse_block()?;
                 let span = body.span;
-                (
-                    Some(ElseBranch::Else(body)),
-                    span,
-                )
+                (Some(ElseBranch::Else(body)), span)
             }
         } else {
             (None, body.span)
@@ -461,7 +510,8 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn peek_offset_is(&self, offset: usize, kind: TokenKind) -> bool {
-        self.peek_offset(offset).is_some_and(|token| token.kind == kind)
+        self.peek_offset(offset)
+            .is_some_and(|token| token.kind == kind)
     }
 
     fn consume(&mut self) -> Option<Token> {

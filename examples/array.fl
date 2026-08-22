@@ -1,0 +1,17 @@
+comp main = fn() -> i64 {
+    let mut tape = [0; 8];
+
+    let mut i = 0;
+    while i < 8 {
+        tape[i] = i * i;
+        i = i + 1;
+    }
+
+    let mut i2 = 0;
+    while i2 < 8 {
+        print_i64(tape[i2]);
+        i2 = i2 + 1;
+    }
+
+    return tape[3];
+};
