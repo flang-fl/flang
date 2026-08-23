@@ -1,0 +1,253 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Flang",
+  "scopeName": "source.fl",
+  "fileTypes": [
+    "fl"
+  ],
+  "patterns": [
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#function-literals"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#function-calls"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(comp)\\s+([A-Za-z][A-Za-z0-9_]*)(?=\\s*=\\s*fn\\b)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.comptime.fl"
+            },
+            "2": {
+              "name": "entity.name.function.fl"
+            }
+          }
+        },
+        {
+          "match": "\\b(comp)\\s+([A-Za-z][A-Za-z0-9_]*)(?=\\s*=)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.comptime.fl"
+            },
+            "2": {
+              "name": "constant.other.fl"
+            }
+          }
+        },
+        {
+          "match": "\\b(let)\\s+(?:(mut)\\s+)?([A-Za-z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.variable.fl"
+            },
+            "2": {
+              "name": "storage.modifier.mutable.fl"
+            },
+            "3": {
+              "name": "variable.other.definition.fl"
+            }
+          }
+        }
+      ]
+    },
+    "function-literals": {
+      "patterns": [
+        {
+          "name": "meta.function.parameters.fl",
+          "begin": "\\b(fn)\\s*(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.function.fl"
+            },
+            "2": {
+              "name": "punctuation.section.parameters.begin.fl"
+            }
+          },
+          "end": "(\\))",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.section.parameters.end.fl"
+            }
+          },
+          "patterns": [
+            {
+              "match": "\\b([A-Za-z][A-Za-z0-9_]*)(?=\\s*:)",
+              "captures": {
+                "1": {
+                  "name": "variable.parameter.fl"
+                }
+              }
+            },
+            {
+              "include": "#builtins"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.fl",
+          "match": "\\b(?:if|else)\\b"
+        },
+        {
+          "name": "keyword.control.loop.fl",
+          "match": "\\bwhile\\b"
+        },
+        {
+          "name": "keyword.control.return.fl",
+          "match": "\\breturn\\b"
+        },
+        {
+          "name": "keyword.declaration.comptime.fl",
+          "match": "\\bcomp\\b"
+        },
+        {
+          "name": "keyword.declaration.variable.fl",
+          "match": "\\blet\\b"
+        },
+        {
+          "name": "storage.modifier.mutable.fl",
+          "match": "\\bmut\\b"
+        },
+        {
+          "name": "storage.type.function.fl",
+          "match": "\\bfn\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.type.builtin.fl",
+          "match": "\\b(?:i64|bool|unit)\\b"
+        },
+        {
+          "name": "support.function.builtin.fl",
+          "match": "\\b(?:print_i64|print_bool|read_byte|print_ascii)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        {
+          "name": "variable.function.fl",
+          "match": "\\b[A-Za-z][A-Za-z0-9_]*\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.fl",
+          "match": "\\b(?:true|false)\\b"
+        },
+        {
+          "name": "constant.numeric.integer.decimal.fl",
+          "match": "(?<![A-Za-z0-9_])[0-9]+(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "constant.other.fl",
+          "match": "\\b[A-Z][A-Z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.augmented.fl",
+          "match": "(?:\\+=|-=|\\*=|/=)"
+        },
+        {
+          "name": "keyword.operator.comparison.fl",
+          "match": "(?:==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.arrow.fl",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.assignment.fl",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arithmetic.fl",
+          "match": "[+\\-*/]"
+        },
+        {
+          "name": "keyword.operator.logical.fl",
+          "match": "!"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.terminator.statement.fl",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.separator.comma.fl",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.type.fl",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.section.block.begin.fl",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.block.end.fl",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.section.group.begin.fl",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.group.end.fl",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.section.brackets.begin.fl",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.brackets.end.fl",
+          "match": "\\]"
+        }
+      ]
+    }
+  }
+}

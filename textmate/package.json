@@ -1,0 +1,25 @@
+{
+  "name": "flang-textmate",
+  "displayName": "Flang",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "*"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "fl",
+        "aliases": ["Flang"],
+        "extensions": [".fl"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fl",
+        "scopeName": "source.fl",
+        "path": "./Flang.tmBundle/Syntaxes/fl.tmLanguage.json"
+      }
+    ]
+  }
+}
