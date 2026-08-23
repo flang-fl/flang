@@ -1,0 +1,90 @@
+comp GREATER_THAN = 62;
+comp LESS_THAN = 60;
+comp PLUS = 43;
+comp MINUS = 45;
+comp LPAREN = 91;
+comp RPAREN = 93;
+comp COMMA = 44;
+comp DOT = 46;
+
+comp END = 10;
+
+comp main = fn() -> i64 {
+    let mut input = [0; 1024];
+    let mut input_i = 0;
+
+    let mut running = true;
+    while running {
+        let next = read_byte();
+        if next == END {
+            running = false;
+        } else {
+            input[input_i] = next;
+            input_i = input_i + 1;
+        }
+    }
+
+
+    let mut tape = [0; 1024];
+    let mut i = 0;
+    let mut ini = 0;
+
+    while ini < input_i {
+        let next = input[ini];
+        ini = ini + 1;
+
+        if next == GREATER_THAN {
+            i = i + 1;
+        } else if next == LESS_THAN {
+            i = i - 1;
+        } else if next == PLUS {
+            tape[i] = tape[i] + 1;
+        } else if next == MINUS {
+            tape[i] = tape[i] - 1;
+        } else if next == DOT {
+            print_ascii(tape[i]);
+        } else if next == COMMA {
+            tape[i] = read_byte();
+        } else if next == LPAREN {
+            if tape[i] == 0 {
+                let mut open_parens = 1;
+
+                while open_parens > 0 {
+                    if ini >= input_i {
+                        return 1;
+                    }
+
+                    if input[ini] == LPAREN {
+                        open_parens = open_parens + 1;
+                    }
+                    if input[ini] == RPAREN {
+                        open_parens = open_parens - 1;
+                    }
+
+                    ini = ini + 1;
+                }
+            }
+        } else if next == RPAREN {
+            if tape[i] != 0 {
+                let mut close_parens = 1;
+                ini = ini - 1;
+
+                while close_parens > 0 {
+                    ini = ini - 1;
+                    if ini < 0 {
+                        return 2;
+                    }
+
+                    if input[ini] == RPAREN {
+                        close_parens = close_parens + 1;
+                    }
+                    if input[ini] == LPAREN {
+                        close_parens = close_parens - 1;
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+};

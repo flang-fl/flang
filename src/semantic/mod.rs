@@ -87,6 +87,15 @@ impl<'src> Analyzer<'src> {
             vec![],
             Type::I64,
         );
+        
+        Self::register_external_function(
+            &mut symbols,
+            &mut environment,
+            "print_ascii",
+            "flang_print_ascii",
+            vec![Type::I64],
+            Type::Unit,
+        );
 
         Self {
             source,
