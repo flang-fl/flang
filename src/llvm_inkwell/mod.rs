@@ -1,4 +1,4 @@
-use crate::comptime::{ComptimeFunction, ComptimeValue, EvaluatedProgram, FunctionId};
+use crate::comptime::{ComptimeFunction, ComptimeValue, FunctionId};
 use crate::parser::ast::BinaryOperator;
 use crate::semantic::hir::{
     HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirPlace, HirPlaceData,
@@ -13,8 +13,9 @@ use inkwell::module::Module;
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum, BasicType, IntType};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
 use std::collections::HashMap;
+use crate::elaboration::ElaboratedProgram;
 
-pub fn emit(program: &EvaluatedProgram) -> Result<String, String> {
+pub fn emit(program: &ElaboratedProgram) -> Result<String, String> {
     let context = Context::create();
     let mut generator = CodeGenerator::new(&context, program);
 
@@ -46,7 +47,7 @@ enum LocalOperand<'ctx> {
 
 pub struct CodeGenerator<'ctx, 'program> {
     context: &'ctx Context,
-    program: &'program EvaluatedProgram,
+    program: &'program ElaboratedProgram,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     functions: HashMap<FunctionId, FunctionValue<'ctx>>,
@@ -54,7 +55,7 @@ pub struct CodeGenerator<'ctx, 'program> {
 }
 
 impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
-    pub fn new(context: &'ctx Context, program: &'program EvaluatedProgram) -> Self {
+    pub fn new(context: &'ctx Context, program: &'program ElaboratedProgram) -> Self {
         Self {
             context,
             program,

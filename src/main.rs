@@ -1,7 +1,6 @@
-use crate::comptime::Evaluator;
 use crate::diagnostics::{Diagnostic, PrintDiagnostics};
+use crate::elaboration::Elaborator;
 use crate::parser::Parser;
-use crate::semantic::Analyzer;
 use crate::source::{SourceFile, SourceFileManager, SourceId, Span};
 use crate::tokenizer::Tokenizer;
 use std::path::Path;
@@ -16,18 +15,18 @@ mod semantic;
 pub mod source;
 pub mod tokenizer;
 mod toolchain;
+mod elaboration;
 
 struct CompilationTimings {
     tokenize: Duration,
     parse: Duration,
-    semantic: Duration,
-    comptime: Duration,
+    elaboration: Duration,
     llvm_ir: Duration,
 }
 
 impl CompilationTimings {
     fn before_llvm(&self) -> Duration {
-        self.tokenize + self.parse + self.semantic + self.comptime
+        self.tokenize + self.parse + self.elaboration
     }
 
     fn compiler_total(&self) -> Duration {
@@ -89,8 +88,7 @@ fn main() {
 
                     print_duration("Tokenization", timings.tokenize);
                     print_duration("Parsing", timings.parse);
-                    print_duration("Semantic Analysis", timings.semantic);
-                    print_duration("Comptime Evaluation", timings.comptime);
+                    print_duration("Elaboration", timings.elaboration);
                     println!();
                     print_duration("Compilation", timings.before_llvm());
                     print_duration("LLVM Generation", timings.llvm_ir);
@@ -138,27 +136,14 @@ fn compile(source: &SourceFile) -> Result<(String, CompilationTimings), Vec<Diag
     println!("{ast:#?}");
     println!();
 
-    let (semantic_program, semantic_time) = measure(|| {
-        let analyzer = Analyzer::new(&source);
-        analyzer.analyze(ast)
+
+    let (program_result, elaboration_time) = measure(|| {
+        Elaborator::new(source).elaborate(ast)
     });
-    let semantic_program = semantic_program?;
 
-    println!("=== Typed AST");
-    println!("{semantic_program:#?}");
-    println!();
+    let elaborated = program_result?;
 
-    let (evaluated, comptime_time) = measure(|| {
-        let compile_time_evaluator = Evaluator::new();
-        compile_time_evaluator.evaluate(semantic_program)
-    });
-    let evaluated = evaluated?;
-
-    println!("=== Compiletime Evaluated Program");
-    println!("{evaluated:#?}");
-    println!();
-
-    let (llvm_result, llvm_time) = measure(|| llvm_inkwell::emit(&evaluated));
+    let (llvm_result, llvm_time) = measure(|| llvm_inkwell::emit(&elaborated));
     let llvm = llvm_result.map_err(|error| {
         vec![Diagnostic::error(
             error,
@@ -180,8 +165,7 @@ fn compile(source: &SourceFile) -> Result<(String, CompilationTimings), Vec<Diag
         CompilationTimings {
             tokenize: tokenize_time,
             parse: parse_time,
-            semantic: semantic_time,
-            comptime: comptime_time,
+            elaboration: elaboration_time,
             llvm_ir: llvm_time,
         },
     ))
@@ -522,5 +506,20 @@ mod tests {
         "#,
             "Identifier not bound",
         );
+    }
+
+    #[test]
+    fn comptime_array_length() {
+        assert_return_value(
+            r#"
+            comp N = 4 * 2;
+
+            comp main = fn() -> i64 {
+                let values: [N]i64 = [0; N];
+                return values[7];
+            };
+            "#,
+            0
+        )
     }
 }

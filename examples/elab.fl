@@ -1,0 +1,20 @@
+comp A = B + 1;
+comp B = C + 1;
+comp C = 2;
+
+comp calculate_size = fn() -> i64 {
+    return A + 3;
+};
+
+comp main = fn() -> i64 {
+    let mut evil: [calculate_size()]i64 = [0; calculate_size()];
+    print_i64(calculate_size());
+
+    let mut i = 0;
+    while i < calculate_size() {
+        evil[i] = i;
+        i = i + 1;
+    }
+
+    return evil[calculate_size() - 1];
+};
