@@ -254,7 +254,7 @@ impl<'src> Analyzer<'src> {
                 };
 
                 let index = self.analyze_expression(
-                    index, Some(base_type.as_ref())
+                    index, Some(&Type::I64)
                 );
 
                 if index.type_ == Type::Error {
