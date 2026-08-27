@@ -142,7 +142,7 @@ comp Vec = fn(comp T: type, comp N: usize) -> type {
     };
 };
 
-comp Vec4i = Vec(i32, 4);
+comp Vec4i = Vec<i32, 4>;
 ```
 
 The design currently leans toward not having a separate generic system at all.
@@ -263,8 +263,8 @@ comp Vec = fn(comp T: type) -> type {
     return struct { data: T };
 };
 
-comp A = Vec(i32);
-comp B = Vec(i32);
+comp A = Vec<i32>;
+comp B = Vec<i32>;
 
 // A == B
 ```
@@ -1997,7 +1997,11 @@ specialization, at most one canonical implementation may exist.
 
 Anyone may construct unregistered evidence, including an adapter for a foreign
 trait and foreign type. Such evidence affects neither global trait solving nor
-method lookup unless it is passed explicitly into a local proof environment.
+ordinary method lookup merely because its binding is lexically visible. It is
+used only when passed as an explicit compile-time argument or named through
+explicit evidence qualification. This prevents importing or declaring an
+unregistered implementation from silently changing the meaning of an
+unrelated call.
 
 Parameterized traits permit several canonical implementations for one receiver
 when their trait inputs differ:
@@ -2025,10 +2029,65 @@ comp serialize_with = fn(
 
 Evidence parameters are ordinary `comp` parameters and participate in normal
 compile-time inference. Automatic inference considers canonical registered
-evidence only. Noncanonical evidence must be passed explicitly. A unique local
-evidence value takes precedence over canonical evidence for method lookup;
-multiple applicable local values are ambiguous and require explicit
-qualification.
+evidence only. Noncanonical evidence must be passed explicitly; lexical
+presence does not make it an implicit candidate and does not shadow canonical
+evidence.
+
+Evidence is a function parameter when selecting it is part of the function's
+abstraction. Evidence for a fully determined operation may instead be resolved
+and captured within the function during compile-time elaboration. For example:
+
+```text
+comp main = fn() {
+    let values: Vec<i32> = ...;
+    let iterator = values.into_iter();
+};
+```
+
+may elaborate conceptually to:
+
+```text
+comp main = fn() {
+    let values: Vec<i32> = ...;
+
+    comp IntoIterImpl: Impl(Vec<i32>, IntoIterator) = canonical;
+    let iterator = IntoIterImpl.into_iter(values);
+};
+```
+
+The generated evidence remains an ordinary local `comp` binding in the
+elaborated program. It is not added to `main`'s parameters because the caller
+has no choice to make. More generally, a trait call may infer canonical
+evidence when its complete evidence type is uniquely determined at
+specialization time. Omission always means canonical lookup; it never means a
+search through arbitrary evidence values in lexical scope.
+
+A generic operation that permits the caller to choose its behavior exposes the
+evidence as an ordinary parameter:
+
+```text
+comp consume = fn(
+    comp T: type,
+    comp Iteration: Impl(T, IntoIterator),
+    value: T,
+) {
+    let iterator = Iteration.into_iter(value);
+    // ...
+};
+```
+
+At a concrete call, normal compile-time inference may supply both `T` and the
+canonical `Iteration`. The evidence dependency belongs to `consume`; it does
+not become a transitive parameter of `main` or of every caller. Supplying a
+noncanonical implementation requires an explicit evidence argument.
+
+An evidence parameter is not required merely because a function is generic.
+When the implementation is a deterministic compile-time function of already
+known parameters, the body may capture that result locally. For example, a
+canonical `IntoIterator` family for `Vec<T>` can elaborate a call using
+`VecIntoIterator<T>` without exposing a further caller choice. A parameter is
+required when evidence remains an external choice, must be forwarded from the
+caller, or cannot otherwise be resolved canonically.
 
 The provisional expression `impl(T, Trait)` queries canonical evidence, so an
 associated member may be projected as:
@@ -2056,10 +2115,14 @@ comp CollectionEquality = fn(
 };
 ```
 
-Initially, concrete results from such factories are registered. Future work may
-allow an implementation-producing function itself to be registered as an
-implementation provider. Provider overlap, recursion, termination,
-specialization, and canonical selection remain open.
+Initially, concrete results from such factories may be registered. The
+preferred future direction also permits an implementation-producing function
+to be registered as the canonical provider for a non-overlapping family such
+as `Impl(Vec<T>, IntoIterator)`. Provider inputs must be determined directly
+from the requested evidence type; canonical selection should not use lexical
+search, priorities, backtracking, or a "most specialized" rule. Overlap and
+cycles are errors. The exact registration syntax and the boundary between this
+restricted form and the general constraint solver remain open.
 
 Type-, trait-, and implementation-producing compile-time functions are
 semantically memoized. The body executes at most once for the same factory
@@ -2082,8 +2145,9 @@ For an instance call, lookup follows these rules:
 4. Report ambiguity if several remain.
 
 Trait and extension candidates have equal priority. Explicit qualification
-selects the intended operation. Local evidence is considered before canonical
-evidence as described above.
+selects the intended operation. Trait lookup infers canonical evidence only.
+An arbitrary local evidence value participates only when the call explicitly
+names or receives it; its mere presence in scope does not affect lookup.
 
 A trait function without `self` fundamentally belongs to its implementation
 evidence:
