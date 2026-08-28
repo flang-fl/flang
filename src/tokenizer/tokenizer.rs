@@ -104,11 +104,20 @@ impl<'src> Tokenizer<'src> {
     fn tokenize_number_literal(&mut self) -> Result<Token, Diagnostic> {
         // TODO: Decimal Numbers
         let start = self.index;
+        // Number
         while let Some(next) = self.peek()
             && next.is_ascii_digit()
         {
             self.next();
         }
+
+        // Optional suffix like `5i32`
+        while let Some(next) = self.peek()
+              && next.is_ascii_alphanumeric()
+        {
+            self.next();
+        }
+
         Ok(Token {
             span: self.source.span(start, self.index),
             kind: TokenKind::NumberLiteral,

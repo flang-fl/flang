@@ -1,12 +1,15 @@
 use crate::semantic::hir::HirFunctionExpression;
 use crate::semantic::symbols::SymbolId;
-use crate::semantic::types::Type;
+use crate::semantic::types::{IntegerType, Type};
 use std::cmp::PartialEq;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeValue {
-    I64(i64),
+    Integer {
+        value: u64,
+        type_: IntegerType
+    },
     Function(FunctionId),
     Type(Type),
     Bool(bool),

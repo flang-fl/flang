@@ -5,7 +5,7 @@ use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
 use crate::parser::ast::{ItemData, Program};
 use crate::semantic::hir::{HirBinding, HirProgram};
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
-use crate::semantic::types::Type;
+use crate::semantic::types::{IntegerType, Type};
 use crate::source::SourceFile;
 
 mod analysis;
@@ -57,14 +57,22 @@ impl<'src> Elaborator<'src> {
         let mut symbols = SymbolTable::new();
         let mut environment = Environment::new();
 
-        let i64_id = symbols.insert(Symbol {
-            name: "i64".to_owned(),
-            kind: SymbolKind::BuiltinType(Type::I64),
-            declaration_span: None,
-            type_: Type::Type,
-        });
+        for integer_type in [
+            IntegerType::I32,
+            IntegerType::I64,
+            IntegerType::U32,
+            IntegerType::Usize
+        ] {
+            let name = integer_type.name();
+            let symbol_id = symbols.insert(Symbol {
+                name: name.to_owned(),
+                kind: SymbolKind::BuiltinType(Type::Integer(integer_type)),
+                declaration_span: None,
+                type_: Type::Type
+            });
 
-        environment.define("i64".to_owned(), i64_id);
+            environment.define(name.to_owned(), symbol_id);
+        }
 
         let unit_id = symbols.insert(Symbol {
             name: "unit".to_owned(),
@@ -89,7 +97,7 @@ impl<'src> Elaborator<'src> {
             &mut environment,
             "print_i64",
             "flang_print_i64",
-            vec![Type::I64],
+            vec![Type::Integer(IntegerType::I64)],
             Type::Unit,
         );
 
@@ -108,7 +116,7 @@ impl<'src> Elaborator<'src> {
             "read_byte",
             "flang_read_byte",
             vec![],
-            Type::I64,
+            Type::Integer(IntegerType::I64),
         );
 
         Self::register_external_function(
@@ -116,7 +124,7 @@ impl<'src> Elaborator<'src> {
             &mut environment,
             "print_ascii",
             "flang_print_ascii",
-            vec![Type::I64],
+            vec![Type::Integer(IntegerType::I64)],
             Type::Unit,
         );
         

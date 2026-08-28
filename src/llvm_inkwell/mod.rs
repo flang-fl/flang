@@ -1,11 +1,12 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue, FunctionId};
+use crate::elaboration::ElaboratedProgram;
 use crate::parser::ast::BinaryOperator;
 use crate::semantic::hir::{
     HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirPlace, HirPlaceData,
     HirStatement, HirStatementData,
 };
 use crate::semantic::symbols::{SymbolId, SymbolKind};
-use crate::semantic::types::Type;
+use crate::semantic::types::{IntegerType, Type};
 use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -13,7 +14,6 @@ use inkwell::module::Module;
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum, BasicType, IntType};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
 use std::collections::HashMap;
-use crate::elaboration::ElaboratedProgram;
 
 pub fn emit(program: &ElaboratedProgram) -> Result<String, String> {
     let context = Context::create();
@@ -86,7 +86,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 .collect::<Result<Vec<BasicMetadataTypeEnum>, String>>()?;
 
             let function_type = match return_type.as_ref() {
-                Type::I64 | Type::Bool => self
+                Type::Integer(_) | Type::Bool => self
                     .llvm_int_type(return_type)?
                     .fn_type(&parameter_types, false),
 
@@ -131,7 +131,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             return Err("`main` must not take parameters".to_owned());
         }
 
-        if function.hir.return_type != Type::I64 {
+        if function.hir.return_type != Type::Integer(IntegerType::I64) {
             return Err("`main` must return i64".to_owned());
         }
 
@@ -183,7 +183,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 .collect::<Result<Vec<BasicMetadataTypeEnum>, String>>()?;
 
             let function_type = match &function.hir.return_type {
-                Type::I64 | Type::Bool => self
+                Type::Integer(_) | Type::Bool => self
                     .llvm_int_type(&function.hir.return_type)?
                     .fn_type(&parameter_types, false),
 
@@ -296,14 +296,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 array,
                 index,
                 array_size,
-            } => {
-                self.emit_array_element_pointer(
-                    *array,
-                    index,
-                    *array_size,
-                    operands,
-                )
-            }
+            } => self.emit_array_element_pointer(*array, index, *array_size, operands),
         }
     }
 
@@ -325,13 +318,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         let zero = self.context.i64_type().const_zero();
 
         unsafe {
-            self.builder.build_gep(
-                *llvm_type,
-                *pointer,
-                &[zero, index],
-                "array.element.ptr"
-            )
-        }.map_err(|error| error.to_string())
+            self.builder
+                .build_gep(*llvm_type, *pointer, &[zero, index], "array.element.ptr")
+        }
+        .map_err(|error| error.to_string())
     }
 
     fn emit_statement(
@@ -560,12 +550,8 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     return Err("index base lost its array type".to_owned());
                 };
 
-                let element_pointer = self.emit_array_element_pointer(
-                    *symbol,
-                    index,
-                    *size,
-                    operands
-                )?;
+                let element_pointer =
+                    self.emit_array_element_pointer(*symbol, index, *size, operands)?;
 
                 let element_type = self.llvm_int_type(&expression.type_)?;
 
@@ -583,7 +569,15 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirExpressionData::Integer(value) => {
-                Ok(self.context.i64_type().const_int(*value as u64, true))
+                let llvm_type = self.llvm_int_type(&expression.type_)?;
+
+                Ok(llvm_type.const_int(
+                    *value,
+                    expression
+                        .type_
+                        .as_integer()
+                        .is_some_and(IntegerType::is_signed),
+                ))
             }
 
             HirExpressionData::Symbol(symbol_id) => {
@@ -612,8 +606,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 }
 
                 match self.program.values.get(*symbol_id) {
-                    Some(ComptimeValue::I64(value)) => {
-                        Ok(self.context.i64_type().const_int(*value as u64, true))
+                    Some(ComptimeValue::Integer { value, type_ }) => {
+                        let semantic_type = Type::Integer(*type_);
+                        let llvm_type = self.llvm_int_type(&semantic_type)?;
+                        Ok(llvm_type.const_int(*value, type_.is_signed()))
                     }
 
                     Some(ComptimeValue::Bool(value)) => {
@@ -625,28 +621,55 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirExpressionData::Binary { lhs, operator, rhs } => {
+                let integer_type = lhs.type_.as_integer();
+                let signed = integer_type.is_some_and(IntegerType::is_signed);
+
                 let lhs = self.emit_expression(lhs, operands)?;
                 let rhs = self.emit_expression(rhs, operands)?;
 
                 let result = match operator {
                     BinaryOperator::LessThanOrEqual => {
+                        let predicate = if signed {
+                            IntPredicate::SLE
+                        } else {
+                            IntPredicate::ULE
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SLE, lhs, rhs, "sletmp")
+                            .build_int_compare(predicate, lhs, rhs, "letmp")
                     }
 
                     BinaryOperator::LessThan => {
+                        let predicate = if signed {
+                            IntPredicate::SLT
+                        } else {
+                            IntPredicate::ULT
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SLT, lhs, rhs, "slttmp")
+                            .build_int_compare(predicate, lhs, rhs, "lttmp")
                     }
 
                     BinaryOperator::GreaterThanOrEqual => {
+                        let predicate = if signed {
+                            IntPredicate::SGE
+                        } else {
+                            IntPredicate::UGE
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SGE, lhs, rhs, "sgetmp")
+                            .build_int_compare(predicate, lhs, rhs, "getmp")
                     }
 
                     BinaryOperator::GreaterThan => {
+                        let predicate = if signed {
+                            IntPredicate::SGT
+                        } else {
+                            IntPredicate::UGT
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SGT, lhs, rhs, "sgttmp")
+                            .build_int_compare(predicate, lhs, rhs, "gttmp")
                     }
 
                     BinaryOperator::NotEqual => {
@@ -659,13 +682,27 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                             .build_int_compare(IntPredicate::EQ, lhs, rhs, "eqltmp")
                     }
 
-                    BinaryOperator::Add => self.builder.build_int_add(lhs, rhs, "addtmp"),
+                    BinaryOperator::Add => {
+                        self.builder.build_int_add(lhs, rhs, "addtmp")
+                    }
 
-                    BinaryOperator::Subtract => self.builder.build_int_sub(lhs, rhs, "subtmp"),
+                    BinaryOperator::Subtract => {
+                        self.builder.build_int_sub(lhs, rhs, "subtmp")
+                    }
 
-                    BinaryOperator::Multiply => self.builder.build_int_mul(lhs, rhs, "multmp"),
+                    BinaryOperator::Multiply => {
+                        self.builder.build_int_mul(lhs, rhs, "multmp")
+                    }
 
-                    BinaryOperator::Divide => self.builder.build_int_signed_div(lhs, rhs, "divtmp"),
+                    BinaryOperator::Divide if signed => {
+                        self.builder
+                            .build_int_signed_div(lhs, rhs, "divtmp")
+                    }
+
+                    BinaryOperator::Divide => {
+                        self.builder
+                            .build_int_unsigned_div(lhs, rhs, "divtmp")
+                    }
                 }
                 .map_err(|error| error.to_string())?;
 
@@ -836,8 +873,16 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
     fn llvm_int_type(&self, type_: &Type) -> Result<IntType<'ctx>, String> {
         match type_ {
-            Type::I64 => Ok(self.context.i64_type()),
+            Type::Integer(IntegerType::I32 | IntegerType::U32) => Ok(self.context.i32_type()),
+
+            Type::Integer(IntegerType::I64) => Ok(self.context.i64_type()),
+
+            Type::Integer(IntegerType::Usize) => {
+                Ok(self.context.i64_type()) // TODO: Actually make it usize
+            }
+
             Type::Bool => Ok(self.context.bool_type()),
+
             _ => Err(format!("unsupported LLVM value type: {type_:?}")),
         }
     }

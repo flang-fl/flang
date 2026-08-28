@@ -66,7 +66,7 @@ impl HirExpression {
 #[derive(Debug, Clone)]
 pub enum HirExpressionData {
     Function(HirFunctionExpression),
-    Integer(i64),
+    Integer(u64),
     Symbol(SymbolId),
     Bool(bool),
     Binary {

@@ -72,7 +72,7 @@ Explicit type annotations should work uniformly:
 ```text
 let x: i32 = 10;
 let mut y: i32 = 20;
-comp N: usize = 32;
+comp N: Usize = 32;
 comp T: type = SomeType;
 ```
 
@@ -136,7 +136,7 @@ Types should be first-class compile-time values.
 Example:
 
 ```text
-comp Vec = fn(comp T: type, comp N: usize) -> type {
+comp Vec = fn(comp T: type, comp N: Usize) -> type {
     return struct {
         data: [N]T;
     };
@@ -337,7 +337,7 @@ Functions should support constraints over compile-time and potentially runtime a
 Example shape:
 
 ```text
-fn get(&self, index: usize) -> ValueType
+fn get(&self, index: Usize) -> ValueType
 where {
     index < self.length;
 }
@@ -545,7 +545,7 @@ A function may be defined as an exhaustive, top-to-bottom sequence of `case`
 clauses. Each case may have a `where` guard and an `ensures` postcondition.
 
 ```text
-comp get = fn(&self, index: usize) -> Option(T) [
+comp get = fn(&self, index: Usize) -> Option(T) [
     case
     where index < self.length
     ensures return is Some(...) {
@@ -794,8 +794,8 @@ Instead, type identity and metadata should live in external/type-level descripto
 struct TypeInfo {
     id: TypeId,
     name: str,
-    size: usize,
-    alignment: usize,
+    size: Usize,
+    alignment: Usize,
     fields: []FieldInfo,
     ...
 }
@@ -1085,12 +1085,12 @@ illustrative shapes are:
 ```text
 comp Ghost = struct<'a, comp T: type> {
     origin: &'a MultiArrayList(T);
-    index: usize;
+    index: Usize;
 };
 
 comp GhostMut = struct<'a, comp T: type> {
     origin: &'a mut MultiArrayList(T);
-    index: usize;
+    index: Usize;
 };
 ```
 
@@ -2236,7 +2236,7 @@ fn identity(comp T: type, value: T) -> T
 ```
 
 ```text
-fn get(&self, index: usize) -> ValueType
+fn get(&self, index: Usize) -> ValueType
 where {
     index < self.length;
 }

@@ -6,7 +6,7 @@ use crate::parser::ast::{
 };
 use crate::semantic::hir::{HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirParameter, HirPlace, HirPlaceData, HirStatement, HirStatementData};
 use crate::semantic::symbols::{Symbol, SymbolId, SymbolKind};
-use crate::semantic::types::Type;
+use crate::semantic::types::{IntegerType, Type};
 use crate::source::Span;
 use std::collections::HashMap;
 use crate::comptime::ComptimeValue;
@@ -20,7 +20,7 @@ impl Elaborator<'_> {
         match &expression.data {
             ExpressionData::Index { base, index } => {
                 let base = self.analyze_expression(base, None);
-                let index = self.analyze_expression(index, Some(&Type::I64));
+                let index = self.analyze_expression(index, Some(&Type::Integer(IntegerType::I64)));
 
                 if base.type_ == Type::Error || index.type_ == Type::Error {
                     return HirExpression::error(expression.span);
@@ -156,49 +156,90 @@ impl Elaborator<'_> {
             }
 
             ExpressionData::Binary { lhs, operator, rhs } => {
-                let expected_type = if operator.requires_number_operands() {
-                    Some(&Type::I64)
-                } else {
-                    None
+                let expected_integer_type = expected
+                    .filter(|expected| expected.is_integer());
+
+                let lhs = match operator {
+                    BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide => {
+                        self.analyze_expression(lhs, expected_integer_type)
+                    }
+
+                    _ => self.analyze_expression(lhs, None)
                 };
 
-                let lhs = self.analyze_expression(lhs, expected_type);
-
-                let expected_rhs_type = if let Some(expected_type) = expected_type {
-                    expected_type
-                } else {
-                    &lhs.type_
-                };
-
-                let rhs = self.analyze_expression(rhs, Some(expected_rhs_type));
-
-                if lhs.type_ == Type::Error || rhs.type_ == Type::Error {
+                if lhs.type_ == Type::Error {
                     return HirExpression::error(expression.span);
                 }
 
-                if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
-                    && !matches!(lhs.type_, Type::I64 | Type::Bool)
+                let supports_equality = lhs.type_.is_integer() || lhs.type_ == Type::Bool;
+                if matches!(
+                    operator,
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                ) && !supports_equality
                 {
                     self.diagnostics.push(Diagnostic::error(
-                        "Type does not support Equality",
+                        "Type does not support equality",
                         expression.span,
-                        format!("{:?}", lhs.type_),
+                        format!("found operands of type `{:?}`", lhs.type_)
+                    ))
+                }
+
+                let rhs = self.analyze_expression(rhs, Some(&lhs.type_));
+
+                if rhs.type_ == Type::Error {
+                    return HirExpression::error(expression.span);
+                }
+
+                if lhs.type_ != rhs.type_ {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Binary operand type mismatch",
+                        expression.span,
+                        format!(
+                            "left operand has type `{:?}`, but right operand has type `{:?}`",
+                            lhs.type_, rhs.type_
+                        )
                     ));
+
+                    return HirExpression::error(expression.span);
+                }
+
+                let requires_integer = matches!(
+                    operator,
+                    BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide
+                    | BinaryOperator::LessThan
+                    | BinaryOperator::GreaterThan
+                    | BinaryOperator::LessThanOrEqual
+                    | BinaryOperator::GreaterThanOrEqual
+                );
+
+                if requires_integer && !lhs.type_.is_integer() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Operator requires integer operands",
+                        expression.span,
+                        format!("found operands of type `{:?}`", lhs.type_),
+                    ));
+
                     return HirExpression::error(expression.span);
                 }
 
                 let resulting_type = match operator {
                     BinaryOperator::Equal
                     | BinaryOperator::NotEqual
-                    | BinaryOperator::GreaterThanOrEqual
+                    | BinaryOperator::LessThan
                     | BinaryOperator::GreaterThan
                     | BinaryOperator::LessThanOrEqual
-                    | BinaryOperator::LessThan => Type::Bool,
+                    | BinaryOperator::GreaterThanOrEqual => Type::Bool,
 
                     BinaryOperator::Add
                     | BinaryOperator::Subtract
                     | BinaryOperator::Multiply
-                    | BinaryOperator::Divide => Type::I64,
+                    | BinaryOperator::Divide => lhs.type_.clone(),
                 };
 
                 if let Some(expected) = expected {
@@ -207,9 +248,9 @@ impl Elaborator<'_> {
                             "Type mismatch",
                             expression.span,
                             format!(
-                                "Expected `{:?}`, but this operator produces `{:?}`",
+                                "Expected `{:?}`, but this expression produces `{:?}`",
                                 expected, resulting_type
-                            ),
+                            )
                         ));
 
                         return HirExpression::error(expression.span);
@@ -223,7 +264,7 @@ impl Elaborator<'_> {
                         lhs: Box::new(lhs),
                         operator: *operator,
                         rhs: Box::new(rhs),
-                    },
+                    }
                 }
             }
 
@@ -371,35 +412,89 @@ impl Elaborator<'_> {
                 }
             }
             ExpressionData::IntegerLiteral => {
-                if let Some(expected) = expected {
-                    if *expected != Type::I64 {
-                        self.diagnostics.push(Diagnostic::error(
-                            "Type mismatch".to_owned(),
-                            expression.span,
-                            format!(
-                                "Expected an expression of type `{:?}` but got a number",
-                                expected
-                            ),
-                        ));
-                        return HirExpression::error(expression.span);
-                    }
-                }
-
-                let parsed = self.source.span_text(expression.span).parse::<i64>();
-
-                let Ok(parsed) = parsed else {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Number overflow".to_owned(),
-                        expression.span,
-                        ":(".to_owned(),
-                    ));
+                let Some(literal) = self.parse_integer_literal(expression.span) else {
                     return HirExpression::error(expression.span);
                 };
 
+                let expected_integer = expected.and_then(Type::as_integer);
+
+                let integer_type = match literal.suffix {
+                    Some(suffix) => {
+                        if let Some(expected_integer) = expected_integer
+                            && expected_integer != suffix
+                        {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Integer type mismatch",
+                                expression.span,
+                                format!(
+                                    "expected `{}`, but this literal has type `{}`",
+                                    expected_integer.name(),
+                                    suffix.name()
+                                )
+                            ));
+
+                            return HirExpression::error(expression.span);
+                        }
+
+                        suffix
+                    }
+
+                    None => {
+                        if let Some(expected) = expected {
+                            match expected.as_integer() {
+                                Some(integer) => integer,
+
+                                None => {
+                                    self.diagnostics.push(Diagnostic::error(
+                                        "Type mismatch",
+                                        expression.span,
+                                        format!(
+                                            "expected `{expected:?}`, but found an integer literal"
+                                        )
+                                    ));
+
+                                    return HirExpression::error(expression.span);
+                                }
+                            }
+                        } else {
+                            IntegerType::I64
+                        }
+                    }
+                };
+
+                if let Some(expected) = expected
+                    && !expected.is_integer()
+                {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Type mismatch",
+                        expression.span,
+                        format!(
+                            "expected `{expected:?}`, but found `{}`",
+                            integer_type.name()
+                        )
+                    ));
+
+                    return HirExpression::error(expression.span);
+                }
+
+                if literal.magnitude > integer_type.maximum_literal() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Integer literal out of range",
+                        expression.span,
+                        format!(
+                            "`{}` does not fit in `{}`",
+                            literal.magnitude,
+                            integer_type.name()
+                        )
+                    ));
+
+                    return HirExpression::error(expression.span);
+                }
+
                 HirExpression {
-                    type_: Type::I64,
+                    type_: Type::Integer(integer_type),
                     span: expression.span,
-                    data: HirExpressionData::Integer(parsed),
+                    data: HirExpressionData::Integer(literal.magnitude),
                 }
             }
 
@@ -772,7 +867,7 @@ impl Elaborator<'_> {
                 };
 
                 let index = self.analyze_expression(
-                    index, Some(&Type::I64)
+                    index, Some(&Type::Integer(IntegerType::I64))
                 );
 
                 if index.type_ == Type::Error {
@@ -825,7 +920,7 @@ impl Elaborator<'_> {
     ) -> Option<usize> {
         let hir = self.analyze_expression(
             expression,
-            Some(&Type::I64)
+            Some(&Type::Integer(IntegerType::I64))
         );
 
         if hir.type_ == Type::Error {
@@ -834,7 +929,10 @@ impl Elaborator<'_> {
 
         let value = self.evaluate_expression(&hir);
 
-        let ComptimeValue::I64(value) = value else {
+        let ComptimeValue::Integer {
+            value,
+            type_: IntegerType::I64
+        } = value else {
             if value != ComptimeValue::Error {
                 self.diagnostics.push(Diagnostic::error(
                     "Array length is not an integer",
@@ -862,4 +960,61 @@ impl Elaborator<'_> {
             }
         }
     }
+    // TODO: Think if custom suffixes should be allowed, like maybe you can say "10mm" calls a function `mm` defined
+    // somewhere that gets you back a "Length" and same for like 10m but there's an ambiguity here if you also wanted 10m to mean minutes
+    // interesting questions!
+    fn parse_integer_literal(
+        &mut self,
+        span: Span
+    ) -> Option<ParsedIntegerLiteral> {
+        let text = self.source.span_text(span);
+
+        let suffix_start = text
+            .find(|char: char| !char.is_ascii_digit())
+            .unwrap_or(text.len());
+
+        let digits = &text[..suffix_start];
+        let suffix = &text[suffix_start..];
+
+        let magnitude = match digits.parse::<u64>() {
+            Ok(value) => value,
+
+            Err(_) => {
+                self.diagnostics.push(Diagnostic::error(
+                    "Integer literal is too large",
+                    span,
+                    "this literal cannot be represented by the compiler"
+                ));
+                return None;
+            }
+        };
+
+        let suffix = match suffix {
+            "" => None,
+            "i32" => Some(IntegerType::I32),
+            "i64" => Some(IntegerType::I64),
+            "u32" => Some(IntegerType::U32),
+            "usize" => Some(IntegerType::Usize),
+
+            unknown => {
+                self.diagnostics.push(Diagnostic::error(
+                    "Unknown integer suffix",
+                    span,
+                    format!("`{unknown}` is not a supported integer suffix")
+                ));
+                return None;
+            }
+        };
+
+        Some(ParsedIntegerLiteral {
+            magnitude,
+            suffix
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedIntegerLiteral {
+    magnitude: u64,
+    suffix: Option<IntegerType>
 }

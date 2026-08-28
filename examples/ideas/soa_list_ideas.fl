@@ -1,8 +1,8 @@
 comp MultiArrayList = fn(comp T_Element: type) -> type {
   return struct {
     data: ByteBuffer;
-    length: usize;
-    capacity: usize;
+    length: Usize;
+    capacity: Usize;
 
     pub comp new = fn() -> Self {
         // implementation evilishly hidden
@@ -12,14 +12,14 @@ comp MultiArrayList = fn(comp T_Element: type) -> type {
         self: &Self,
         comp T_Value: type,
         comp field: FieldAccess(T_Element, T_Value),
-        index: usize
+        index: Usize
     ) -> &T_Value {
       // implementation evilishly hidden
     }
 
     pub comp get_ghost = fn<'a>(
         self: &'a Self,
-        index: usize
+        index: Usize
     ) -> Ghost<'a> {
         return .{
             index: index
@@ -28,7 +28,7 @@ comp MultiArrayList = fn(comp T_Element: type) -> type {
 
     pub comp get_ghost_mut = fn(
         self: &'a mut Self,
-        index: usize
+        index: Usize
     ) -> Ghost<'a> {
         return .{
             index: index
@@ -38,7 +38,7 @@ comp MultiArrayList = fn(comp T_Element: type) -> type {
     // pub comp set = fn(...) {...} evilishly hidden
 
     pub comp Ghost = view<'a> {
-      index: usize;
+      index: Usize;
 
       pub @operator_field_get = fn(
         self: &Self,
@@ -64,7 +64,7 @@ comp MultiArrayList = fn(comp T_Element: type) -> type {
 
 comp main = fn() -> i64 {
     comp Entity = struct {
-        id: usize,
+        id: Usize,
         health: f32,
         alive: bool,
     };
