@@ -17,6 +17,19 @@ pub mod tokenizer;
 mod toolchain;
 mod elaboration;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TargetInfo {
+    pub pointer_bit_width: u32,
+}
+
+impl TargetInfo {
+    pub fn native() -> TargetInfo {
+        TargetInfo {
+            pointer_bit_width: usize::BITS
+        }
+    }
+}
+
 struct CompilationTimings {
     tokenize: Duration,
     parse: Duration,
@@ -56,7 +69,9 @@ fn main() {
         panic!("More than one file not currently supported");
     };
 
-    match compile(file) {
+    let target_info = TargetInfo::native();
+
+    match compile(file, target_info) {
         Err(diagnostics) => {
             diagnostics.print_diagnostics(&mut file_manager);
         }
@@ -113,7 +128,7 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, Duration) {
     (result, started.elapsed())
 }
 
-fn compile(source: &SourceFile) -> Result<(String, CompilationTimings), Vec<Diagnostic>> {
+fn compile(source: &SourceFile, target: TargetInfo) -> Result<(String, CompilationTimings), Vec<Diagnostic>> {
     let (tokens, tokenize_time) = measure(|| {
         let tokenizer = Tokenizer::new(source);
         tokenizer.tokenize()
@@ -138,12 +153,12 @@ fn compile(source: &SourceFile) -> Result<(String, CompilationTimings), Vec<Diag
 
 
     let (program_result, elaboration_time) = measure(|| {
-        Elaborator::new(source).elaborate(ast)
+        Elaborator::new(source, target).elaborate(ast)
     });
 
     let elaborated = program_result?;
 
-    let (llvm_result, llvm_time) = measure(|| llvm_inkwell::emit(&elaborated));
+    let (llvm_result, llvm_time) = measure(|| llvm_inkwell::emit(&elaborated, target));
     let llvm = llvm_result.map_err(|error| {
         vec![Diagnostic::error(
             error,
@@ -180,7 +195,7 @@ mod tests {
 
         let id = sources.add_file("<test>".to_owned(), text.to_owned());
 
-        let result = compile(sources.get_file(id));
+        let result = compile(sources.get_file(id), TargetInfo::native());
 
         result.map(|(compile, _time)| compile)
     }

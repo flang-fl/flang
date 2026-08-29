@@ -20,7 +20,7 @@ impl Elaborator<'_> {
         match &expression.data {
             ExpressionData::Index { base, index } => {
                 let base = self.analyze_expression(base, None);
-                let index = self.analyze_expression(index, Some(&Type::Integer(IntegerType::I64)));
+                let index = self.analyze_expression(index, Some(&Type::Integer(IntegerType::Usize)));
 
                 if base.type_ == Type::Error || index.type_ == Type::Error {
                     return HirExpression::error(expression.span);
@@ -477,7 +477,7 @@ impl Elaborator<'_> {
                     return HirExpression::error(expression.span);
                 }
 
-                if literal.magnitude > integer_type.maximum_literal() {
+                if literal.magnitude > integer_type.maximum_literal(&self.target) {
                     self.diagnostics.push(Diagnostic::error(
                         "Integer literal out of range",
                         expression.span,
@@ -867,7 +867,7 @@ impl Elaborator<'_> {
                 };
 
                 let index = self.analyze_expression(
-                    index, Some(&Type::Integer(IntegerType::I64))
+                    index, Some(&Type::Integer(IntegerType::Usize))
                 );
 
                 if index.type_ == Type::Error {
@@ -920,7 +920,7 @@ impl Elaborator<'_> {
     ) -> Option<usize> {
         let hir = self.analyze_expression(
             expression,
-            Some(&Type::Integer(IntegerType::I64))
+            Some(&Type::Integer(IntegerType::Usize))
         );
 
         if hir.type_ == Type::Error {
@@ -931,13 +931,13 @@ impl Elaborator<'_> {
 
         let ComptimeValue::Integer {
             value,
-            type_: IntegerType::I64
+            type_: IntegerType::Usize
         } = value else {
             if value != ComptimeValue::Error {
                 self.diagnostics.push(Diagnostic::error(
                     "Array length is not an integer",
                     expression.span,
-                    "expected a compile-time `i64` value",
+                    "expected a compile-time `usize` value",
                 ));
             }
 
@@ -991,10 +991,16 @@ impl Elaborator<'_> {
 
         let suffix = match suffix {
             "" => None,
-            "i32" => Some(IntegerType::I32),
-            "i64" => Some(IntegerType::I64),
+            "u8" => Some(IntegerType::U8),
+            "i8" => Some(IntegerType::I8),
+            "u16" => Some(IntegerType::U16),
+            "i16" => Some(IntegerType::I16),
             "u32" => Some(IntegerType::U32),
+            "i32" => Some(IntegerType::I32),
+            "u64" => Some(IntegerType::U64),
+            "i64" => Some(IntegerType::I64),
             "usize" => Some(IntegerType::Usize),
+            "isize" => Some(IntegerType::Isize),
 
             unknown => {
                 self.diagnostics.push(Diagnostic::error(

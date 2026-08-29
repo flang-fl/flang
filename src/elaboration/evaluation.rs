@@ -286,7 +286,7 @@ impl Elaborator<'_> {
                                     return ComptimeValue::Error;
                                 };
 
-                                if result > lhs_type.maximum_literal() {
+                                if result > lhs_type.maximum_literal(&self.target) {
                                     self.diagnostics.push(Diagnostic::error(
                                         "Integer overflow",
                                         expression.span,

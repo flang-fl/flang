@@ -7,17 +7,19 @@ use crate::semantic::hir::{
 };
 use crate::semantic::symbols::{SymbolId, SymbolKind};
 use crate::semantic::types::{IntegerType, Type};
-use inkwell::IntPredicate;
+use inkwell::{IntPredicate, OptimizationLevel};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum, BasicType, IntType};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
 use std::collections::HashMap;
+use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine};
+use crate::TargetInfo;
 
-pub fn emit(program: &ElaboratedProgram) -> Result<String, String> {
+pub fn emit(program: &ElaboratedProgram, target_info: TargetInfo) -> Result<String, String> {
     let context = Context::create();
-    let mut generator = CodeGenerator::new(&context, program);
+    let mut generator = CodeGenerator::new(&context, program, target_info)?;
 
     generator.declare_external_functions()?;
     generator.declare_functions()?;
@@ -48,22 +50,72 @@ enum LocalOperand<'ctx> {
 pub struct CodeGenerator<'ctx, 'program> {
     context: &'ctx Context,
     program: &'program ElaboratedProgram,
+    target: TargetInfo,
     module: Module<'ctx>,
+    target_data: TargetData,
     builder: Builder<'ctx>,
     functions: HashMap<FunctionId, FunctionValue<'ctx>>,
     external_functions: HashMap<SymbolId, FunctionValue<'ctx>>,
 }
 
 impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
-    pub fn new(context: &'ctx Context, program: &'program ElaboratedProgram) -> Self {
-        Self {
+    pub fn new(context: &'ctx Context, program: &'program ElaboratedProgram, target_info: TargetInfo) -> Result<Self, String> {
+        Target::initialize_native(
+            &InitializationConfig::default()
+        ).map_err(|error| {
+            format!(
+                "failed to initialize native LLVM target: {error}"
+            )
+        })?;
+
+        let triple = TargetMachine::get_default_triple();
+
+        let llvm_target = Target::from_triple(&triple)
+            .map_err(|err| err.to_string())?;
+
+        let target_machine = llvm_target
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                OptimizationLevel::None,
+                RelocMode::Default,
+                CodeModel::Default
+            ).ok_or_else(|| {
+            "failed to create LLVM target machine".to_owned()
+        })?;
+
+        let target_data = target_machine.get_target_data();
+
+        let llvm_pointer_width = target_data.get_pointer_byte_size(None) * 8;
+
+        if llvm_pointer_width != target_info.pointer_bit_width {
+            return Err(format!(
+                "target pointer width mismatch: semantic \
+                analysis uses {} bits, but LLVM uses \
+                {llvm_pointer_width} bits",
+                target_info.pointer_bit_width
+            ));
+        }
+
+        let module = context.create_module("flang");
+
+        module.set_triple(&triple);
+
+        let data_layout = target_data.get_data_layout();
+
+        module.set_data_layout(&data_layout);
+
+        Ok(Self {
             context,
             program,
-            module: context.create_module("flang"),
+            target: target_info,
+            module,
+            target_data,
             builder: context.create_builder(),
             external_functions: HashMap::new(),
             functions: HashMap::new(),
-        }
+        })
     }
 
     fn declare_external_functions(&mut self) -> Result<(), String> {
@@ -741,23 +793,21 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
         let invalid_block = self.context.append_basic_block(function, "index.invalid");
 
-        let i64_type = self.context.i64_type();
-        let zero = i64_type.const_zero();
-        let length = i64_type.const_int(array_size as u64, false);
+        let index_type = index.get_type();
 
-        let nonnegative = self
-            .builder
-            .build_int_compare(IntPredicate::SGE, index, zero, "index.nonnegative")
-            .map_err(|error| error.to_string())?;
-
-        let below_length = self
-            .builder
-            .build_int_compare(IntPredicate::SLT, index, length, "index.below_length")
-            .map_err(|error| error.to_string())?;
+        let length = index_type.const_int(
+            array_size as u64,
+            false,
+        );
 
         let valid = self
             .builder
-            .build_and(nonnegative, below_length, "index.in_bounds")
+            .build_int_compare(
+                IntPredicate::ULT,
+                index,
+                length,
+                "index.in_bounds"
+            )
             .map_err(|error| error.to_string())?;
 
         self.builder
@@ -872,13 +922,30 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     }
 
     fn llvm_int_type(&self, type_: &Type) -> Result<IntType<'ctx>, String> {
+        use Type::Integer;
+        use IntegerType::*;
         match type_ {
-            Type::Integer(IntegerType::I32 | IntegerType::U32) => Ok(self.context.i32_type()),
+            Integer(U8 | I8) => Ok(self.context.i8_type()),
+            Integer(U16 | I16) => Ok(self.context.i16_type()),
+            Integer(U32 | I32) => Ok(self.context.i32_type()),
+            Integer(U64 | I64) => Ok(self.context.i64_type()),
 
-            Type::Integer(IntegerType::I64) => Ok(self.context.i64_type()),
+            Integer(Usize | Isize) => {
+                let llvm_type = self.context.ptr_sized_int_type(
+                    &self.target_data,
+                    None,
+                );
 
-            Type::Integer(IntegerType::Usize) => {
-                Ok(self.context.i64_type()) // TODO: Actually make it usize
+                if llvm_type.get_bit_width() != self.target.pointer_bit_width {
+                    return Err(format!(
+                        "LLVM pointer-sized integer has width {}, \
+                        but semantic analysis expects {}",
+                        llvm_type.get_bit_width(),
+                        self.target.pointer_bit_width
+                    ));
+                }
+
+                Ok(llvm_type)
             }
 
             Type::Bool => Ok(self.context.bool_type()),

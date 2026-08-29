@@ -7,6 +7,7 @@ use crate::semantic::hir::{HirBinding, HirProgram};
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::{IntegerType, Type};
 use crate::source::SourceFile;
+use crate::TargetInfo;
 
 mod analysis;
 mod dependencies;
@@ -21,6 +22,7 @@ pub struct ElaboratedProgram {
 }
 
 pub struct Elaborator<'src> {
+    target: TargetInfo,
     pub(super) source: &'src SourceFile,
     
     pub(super) symbols: SymbolTable,
@@ -53,15 +55,21 @@ pub struct Elaborator<'src> {
 }
 
 impl<'src> Elaborator<'src> {
-    pub fn new(source: &'src SourceFile) -> Self {
+    pub fn new(source: &'src SourceFile, target: TargetInfo) -> Self {
         let mut symbols = SymbolTable::new();
         let mut environment = Environment::new();
 
         for integer_type in [
-            IntegerType::I32,
-            IntegerType::I64,
+            IntegerType::U8,
+            IntegerType::I8,
+            IntegerType::U16,
+            IntegerType::I16,
             IntegerType::U32,
-            IntegerType::Usize
+            IntegerType::I32,
+            IntegerType::U64,
+            IntegerType::I64,
+            IntegerType::Usize,
+            IntegerType::Isize,
         ] {
             let name = integer_type.name();
             let symbol_id = symbols.insert(Symbol {
@@ -129,6 +137,7 @@ impl<'src> Elaborator<'src> {
         );
         
         Self {
+            target,
             source,
             symbols,
             environment,
