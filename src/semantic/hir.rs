@@ -1,4 +1,4 @@
-use crate::parser::ast::{BinaryOperator, Expression, Phase};
+use crate::parser::ast::{BinaryOperator, Expression, Phase, UnaryOperator};
 use crate::semantic::symbols::SymbolId;
 use crate::semantic::types::Type;
 use crate::source::Span;
@@ -66,9 +66,13 @@ impl HirExpression {
 #[derive(Debug, Clone)]
 pub enum HirExpressionData {
     Function(HirFunctionExpression),
-    Integer(i64),
+    Integer(i128),
     Symbol(SymbolId),
     Bool(bool),
+    Unary {
+        operator: UnaryOperator,
+        operand: Box<HirExpression>
+    },
     Binary {
         lhs: Box<HirExpression>,
         operator: BinaryOperator,

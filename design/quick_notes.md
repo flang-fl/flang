@@ -1,5 +1,5 @@
 ```
-comp get = fn(&self, index: usize) -> Option(T) [
+comp get = fn(&self, index: Usize) -> Option(T) [
   case
     where index < self.length
     ensures return is Some(...) {
@@ -19,7 +19,7 @@ comp get = fn(&self, index: usize) -> Option(T) [
     } 
     
   // same as
-  case(&self, index: usize) -> Option(T)
+  case(&self, index: Usize) -> Option(T)
     where index >= self.length
     ensures return is None {
       return None;

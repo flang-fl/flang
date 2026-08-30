@@ -1,0 +1,22 @@
+comp add_i32 = fn(a: i32, b: i32) -> i32 {
+    return a + b;
+};
+
+comp greater_u32 = fn(a: u32, b: u32) -> bool {
+    return a > b;
+};
+
+comp answer = add_i32(20, 22);
+
+comp main = fn() -> i64 {
+    if answer != 42i32 {
+        return 1;
+    }
+
+    if greater_u32(4000000000u32, 1u32) {
+        return 0;
+    }
+
+    return 2;
+};
+

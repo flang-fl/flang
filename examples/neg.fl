@@ -1,0 +1,9 @@
+comp main = fn() -> i64 {
+    let value = -42i32;
+
+    if value < 0 {
+        return 0;
+    }
+
+    return 1;
+};

@@ -1,8 +1,11 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue};
 use crate::diagnostics::Diagnostic;
 use crate::elaboration::Elaborator;
-use crate::parser::ast::{BinaryOperator, Phase};
-use crate::semantic::hir::{HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirPlaceData, HirStatement, HirStatementData};
+use crate::parser::ast::{BinaryOperator, Phase, UnaryOperator};
+use crate::semantic::hir::{
+    HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirPlaceData,
+    HirStatement, HirStatementData,
+};
 use crate::semantic::symbols::{SymbolId, SymbolKind};
 use crate::semantic::types::Type;
 use std::collections::HashMap;
@@ -14,10 +17,7 @@ pub(super) enum EvaluationFlow {
 }
 
 impl Elaborator<'_> {
-    pub(super) fn lookup_value(
-        &self,
-        symbol: SymbolId
-    ) -> Option<&ComptimeValue> {
+    pub(super) fn lookup_value(&self, symbol: SymbolId) -> Option<&ComptimeValue> {
         self.frames
             .iter()
             .rev()
@@ -25,10 +25,7 @@ impl Elaborator<'_> {
             .or_else(|| self.values.get(symbol))
     }
 
-    pub(super) fn evaluate_statement(
-        &mut self,
-        statement: &HirStatement,
-    ) -> EvaluationFlow {
+    pub(super) fn evaluate_statement(&mut self, statement: &HirStatement) -> EvaluationFlow {
         match &statement.data {
             HirStatementData::Error => EvaluationFlow::Error,
 
@@ -54,7 +51,9 @@ impl Elaborator<'_> {
                 match &target.data {
                     HirPlaceData::Symbol(symbol) => {
                         let Some(slot) = frame.get_mut(symbol) else {
-                            panic!("HIR invariant was violated: the local should have been bound earlier");
+                            panic!(
+                                "HIR invariant was violated: the local should have been bound earlier"
+                            );
                         };
 
                         *slot = value;
@@ -64,7 +63,7 @@ impl Elaborator<'_> {
                         self.diagnostics.push(Diagnostic::error(
                             "Arrays are not supported at compile time right now",
                             statement.span,
-                            ":("
+                            ":(",
                         ));
 
                         return EvaluationFlow::Error;
@@ -173,10 +172,7 @@ impl Elaborator<'_> {
         EvaluationFlow::Continue
     }
 
-    pub(super) fn evaluate_expression(
-        &mut self,
-        expression: &HirExpression,
-    ) -> ComptimeValue {
+    pub(super) fn evaluate_expression(&mut self, expression: &HirExpression) -> ComptimeValue {
         match &expression.data {
             HirExpressionData::Index { .. }
             | HirExpressionData::ArrayRepeatInitialization { .. } => {
@@ -199,136 +195,218 @@ impl Elaborator<'_> {
                 ComptimeValue::Function(function_id)
             }
 
-            HirExpressionData::Integer(value) => ComptimeValue::I64(*value),
+            HirExpressionData::Integer(value) => {
+                let Some(integer_type) = expression.type_.as_integer() else {
+                    return ComptimeValue::Error;
+                };
+
+                ComptimeValue::Integer {
+                    value: *value,
+                    type_: integer_type,
+                }
+            }
+
+            HirExpressionData::Unary {
+                operator,
+                operand
+            } => {
+                let operand = self.evaluate_expression(operand);
+
+                match (operator, operand) {
+                    (
+                        UnaryOperator::Negate,
+                        ComptimeValue::Integer {
+                            value,
+                            type_
+                        },
+                    ) => {
+                        if !type_.is_signed() {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Cannot negate unsigned integer",
+                                expression.span,
+                                format!(
+                                    "`{}` is unsigned",
+                                    type_.name()
+                                )
+                            ));
+
+                            return ComptimeValue::Error;
+                        }
+
+                        let Some(value) = value.checked_neg() else {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Integer overflow",
+                                expression.span,
+                                "negation overflowed"
+                            ));
+
+                            return ComptimeValue::Error;
+                        };
+
+                        if !type_.contains(
+                            value,
+                            &self.target
+                        ) {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Integer overflow",
+                                expression.span,
+                                format!(
+                                    "result `{value}` does not fit in `{}`",
+                                    type_.name()
+                                )
+                            ));
+
+                            return ComptimeValue::Error;
+                        }
+
+                        ComptimeValue::Integer {
+                            value,
+                            type_
+                        }
+                    }
+
+                    (_, ComptimeValue::Error) => ComptimeValue::Error,
+
+                    (UnaryOperator::Negate, _) => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Evil bad",
+                            expression.span,
+                            "Fix my diagnostic later"
+                        ));
+
+                        ComptimeValue::Error
+                    }
+                }
+            }
 
             HirExpressionData::Binary { lhs, operator, rhs } => {
                 let lhs = self.evaluate_expression(lhs);
                 let rhs = self.evaluate_expression(rhs);
 
-                match (operator, lhs, rhs) {
-                    (
-                        BinaryOperator::GreaterThanOrEqual,
-                        ComptimeValue::I64(lhs),
-                        ComptimeValue::I64(rhs),
-                    ) => ComptimeValue::Bool(lhs >= rhs),
+                match (lhs, rhs) {
+                    (ComptimeValue::Error, _) | (_, ComptimeValue::Error) => ComptimeValue::Error,
 
                     (
-                        BinaryOperator::GreaterThan,
-                        ComptimeValue::I64(lhs),
-                        ComptimeValue::I64(rhs),
-                    ) => ComptimeValue::Bool(lhs > rhs),
-
-                    (
-                        BinaryOperator::LessThanOrEqual,
-                        ComptimeValue::I64(lhs),
-                        ComptimeValue::I64(rhs),
-                    ) => ComptimeValue::Bool(lhs <= rhs),
-
-                    (
-                        BinaryOperator::LessThan,
-                        ComptimeValue::I64(lhs),
-                        ComptimeValue::I64(rhs),
-                    ) => ComptimeValue::Bool(lhs < rhs),
-
-                    (
-                        BinaryOperator::NotEqual,
-                        ComptimeValue::I64(lhs),
-                        ComptimeValue::I64(rhs),
-                    ) => ComptimeValue::Bool(lhs != rhs),
-
-                    (
-                        BinaryOperator::NotEqual,
-                        ComptimeValue::Bool(lhs),
-                        ComptimeValue::Bool(rhs),
-                    ) => ComptimeValue::Bool(lhs != rhs),
-
-                    (BinaryOperator::Equal, ComptimeValue::I64(lhs), ComptimeValue::I64(rhs)) => {
-                        ComptimeValue::Bool(lhs == rhs)
-                    }
-
-                    (BinaryOperator::Equal, ComptimeValue::Bool(lhs), ComptimeValue::Bool(rhs)) => {
-                        ComptimeValue::Bool(lhs == rhs)
-                    }
-
-                    (BinaryOperator::Add, ComptimeValue::I64(lhs), ComptimeValue::I64(rhs)) => {
-                        let result = lhs.checked_add(rhs);
-                        match result {
-                            Some(result) => ComptimeValue::I64(result),
-                            None => {
-                                self.diagnostics.push(Diagnostic::error(
-                                    "Integer Overflow",
-                                    expression.span,
-                                    "this overflows :(",
-                                ));
-                                ComptimeValue::Error
-                            }
-                        }
-                    }
-                    (
-                        BinaryOperator::Subtract,
-                        ComptimeValue::I64(lhs),
-                        ComptimeValue::I64(rhs),
+                        ComptimeValue::Integer {
+                            value: lhs,
+                            type_: lhs_type,
+                        },
+                        ComptimeValue::Integer {
+                            value: rhs,
+                            type_: rhs_type,
+                        },
                     ) => {
-                        let result = lhs.checked_sub(rhs);
-                        match result {
-                            Some(result) => ComptimeValue::I64(result),
-                            None => {
-                                self.diagnostics.push(Diagnostic::error(
-                                    "Integer Overflow",
-                                    expression.span,
-                                    "this overflows :(",
-                                ));
-                                ComptimeValue::Error
-                            }
-                        }
-                    }
-                    (
-                        BinaryOperator::Multiply,
-                        ComptimeValue::I64(lhs),
-                        ComptimeValue::I64(rhs),
-                    ) => {
-                        let result = lhs.checked_mul(rhs);
-                        match result {
-                            Some(result) => ComptimeValue::I64(result),
-                            None => {
-                                self.diagnostics.push(Diagnostic::error(
-                                    "Integer Overflow",
-                                    expression.span,
-                                    "this overflows :(",
-                                ));
-                                ComptimeValue::Error
-                            }
-                        }
-                    }
-                    (BinaryOperator::Divide, ComptimeValue::I64(lhs), ComptimeValue::I64(rhs)) => {
-                        if rhs == 0 {
+                        if lhs_type != rhs_type {
                             self.diagnostics.push(Diagnostic::error(
-                                "Division by zero",
+                                "Mismatched integer types",
                                 expression.span,
-                                "really?",
+                                format!(
+                                    "cannot evaluate `{}` and `{}` together",
+                                    lhs_type.name(),
+                                    rhs_type.name()
+                                ),
                             ));
+
                             return ComptimeValue::Error;
                         }
-                        let result = lhs.checked_div(rhs);
-                        match result {
-                            Some(result) => ComptimeValue::I64(result),
-                            None => {
-                                self.diagnostics.push(Diagnostic::error(
-                                    "Integer Overflow",
-                                    expression.span,
-                                    "this overflows :(",
-                                ));
-                                ComptimeValue::Error
+
+                        match operator {
+                            BinaryOperator::Equal => ComptimeValue::Bool(lhs == rhs),
+
+                            BinaryOperator::NotEqual => ComptimeValue::Bool(lhs != rhs),
+
+                            BinaryOperator::LessThan => ComptimeValue::Bool(lhs < rhs),
+
+                            BinaryOperator::LessThanOrEqual => ComptimeValue::Bool(lhs <= rhs),
+
+                            BinaryOperator::GreaterThan => ComptimeValue::Bool(lhs > rhs),
+
+                            BinaryOperator::GreaterThanOrEqual => ComptimeValue::Bool(lhs >= rhs),
+
+                            BinaryOperator::Add
+                            | BinaryOperator::Subtract
+                            | BinaryOperator::Multiply
+                            | BinaryOperator::Divide => {
+                                let result = match operator {
+                                    BinaryOperator::Add => lhs.checked_add(rhs),
+                                    BinaryOperator::Subtract => lhs.checked_sub(rhs),
+                                    BinaryOperator::Multiply => lhs.checked_mul(rhs),
+
+                                    BinaryOperator::Divide => {
+                                        if rhs == 0 {
+                                            self.diagnostics.push(Diagnostic::error(
+                                                "Division by zero",
+                                                expression.span,
+                                                "the divisor evaluates to zero",
+                                            ));
+
+                                            return ComptimeValue::Error;
+                                        }
+
+                                        lhs.checked_div(rhs)
+                                    }
+
+                                    _ => unreachable!(),
+                                };
+
+                                let Some(result) = result else {
+                                    self.diagnostics.push(Diagnostic::error(
+                                        "Integer overflow",
+                                        expression.span,
+                                        format!("this operation overflows `{}`", lhs_type.name()),
+                                    ));
+
+                                    return ComptimeValue::Error;
+                                };
+
+                                if !lhs_type.contains(
+                                    result,
+                                    &self.target
+                                ) {
+                                    self.diagnostics.push(Diagnostic::error(
+                                        "Integer overflow",
+                                        expression.span,
+                                        format!(
+                                            "result `{result}` does not fit in `{}`",
+                                            lhs_type.name()
+                                        ),
+                                    ));
+
+                                    return ComptimeValue::Error;
+                                }
+
+                                ComptimeValue::Integer {
+                                    value: result,
+                                    type_: lhs_type,
+                                }
                             }
                         }
                     }
+                    (ComptimeValue::Bool(lhs), ComptimeValue::Bool(rhs)) => match operator {
+                        BinaryOperator::Equal => ComptimeValue::Bool(lhs == rhs),
+                        BinaryOperator::NotEqual => ComptimeValue::Bool(lhs != rhs),
 
-                    (_, ComptimeValue::Error, _) | (_, _, ComptimeValue::Error) => {
-                        ComptimeValue::Error
-                    }
+                        _ => {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Invalid boolean operation",
+                                expression.span,
+                                format!("operator `{operator:?}` cannot be applied to booleans"),
+                            ));
 
-                    _ => {
-                        // Type invariant was violated
+                            ComptimeValue::Error
+                        }
+                    },
+
+                    (lhs, rhs) => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Invalid compile-time binary operation",
+                            expression.span,
+                            format!(
+                                "operator `{operator:?}` cannot be applied to \
+                                `{lhs:?}` and `{rhs:?}`"
+                            )
+                        ));
+
                         ComptimeValue::Error
                     }
                 }
@@ -390,13 +468,13 @@ impl Elaborator<'_> {
                         ..
                     }
                 ) && self.pending_bindings.contains_key(symbol);
-                
+
                 if is_pending_comptime_binding {
                     return self
                         .ensure_binding_evaluated(*symbol)
                         .unwrap_or(ComptimeValue::Error);
                 }
-                
+
                 let symbol_info = self.symbols.get(*symbol);
 
                 let message = match &symbol_info.kind {

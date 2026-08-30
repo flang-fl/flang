@@ -1,23 +1,25 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue, FunctionId};
-use crate::parser::ast::BinaryOperator;
+use crate::elaboration::ElaboratedProgram;
+use crate::parser::ast::{BinaryOperator, UnaryOperator};
 use crate::semantic::hir::{
     HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirPlace, HirPlaceData,
     HirStatement, HirStatementData,
 };
 use crate::semantic::symbols::{SymbolId, SymbolKind};
-use crate::semantic::types::Type;
-use inkwell::IntPredicate;
+use crate::semantic::types::{IntegerType, Type};
+use inkwell::{IntPredicate, OptimizationLevel};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum, BasicType, IntType};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
 use std::collections::HashMap;
-use crate::elaboration::ElaboratedProgram;
+use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine};
+use crate::TargetInfo;
 
-pub fn emit(program: &ElaboratedProgram) -> Result<String, String> {
+pub fn emit(program: &ElaboratedProgram, target_info: TargetInfo) -> Result<String, String> {
     let context = Context::create();
-    let mut generator = CodeGenerator::new(&context, program);
+    let mut generator = CodeGenerator::new(&context, program, target_info)?;
 
     generator.declare_external_functions()?;
     generator.declare_functions()?;
@@ -48,22 +50,72 @@ enum LocalOperand<'ctx> {
 pub struct CodeGenerator<'ctx, 'program> {
     context: &'ctx Context,
     program: &'program ElaboratedProgram,
+    target: TargetInfo,
     module: Module<'ctx>,
+    target_data: TargetData,
     builder: Builder<'ctx>,
     functions: HashMap<FunctionId, FunctionValue<'ctx>>,
     external_functions: HashMap<SymbolId, FunctionValue<'ctx>>,
 }
 
 impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
-    pub fn new(context: &'ctx Context, program: &'program ElaboratedProgram) -> Self {
-        Self {
+    pub fn new(context: &'ctx Context, program: &'program ElaboratedProgram, target_info: TargetInfo) -> Result<Self, String> {
+        Target::initialize_native(
+            &InitializationConfig::default()
+        ).map_err(|error| {
+            format!(
+                "failed to initialize native LLVM target: {error}"
+            )
+        })?;
+
+        let triple = TargetMachine::get_default_triple();
+
+        let llvm_target = Target::from_triple(&triple)
+            .map_err(|err| err.to_string())?;
+
+        let target_machine = llvm_target
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                OptimizationLevel::None,
+                RelocMode::Default,
+                CodeModel::Default
+            ).ok_or_else(|| {
+            "failed to create LLVM target machine".to_owned()
+        })?;
+
+        let target_data = target_machine.get_target_data();
+
+        let llvm_pointer_width = target_data.get_pointer_byte_size(None) * 8;
+
+        if llvm_pointer_width != target_info.pointer_bit_width {
+            return Err(format!(
+                "target pointer width mismatch: semantic \
+                analysis uses {} bits, but LLVM uses \
+                {llvm_pointer_width} bits",
+                target_info.pointer_bit_width
+            ));
+        }
+
+        let module = context.create_module("flang");
+
+        module.set_triple(&triple);
+
+        let data_layout = target_data.get_data_layout();
+
+        module.set_data_layout(&data_layout);
+
+        Ok(Self {
             context,
             program,
-            module: context.create_module("flang"),
+            target: target_info,
+            module,
+            target_data,
             builder: context.create_builder(),
             external_functions: HashMap::new(),
             functions: HashMap::new(),
-        }
+        })
     }
 
     fn declare_external_functions(&mut self) -> Result<(), String> {
@@ -86,7 +138,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 .collect::<Result<Vec<BasicMetadataTypeEnum>, String>>()?;
 
             let function_type = match return_type.as_ref() {
-                Type::I64 | Type::Bool => self
+                Type::Integer(_) | Type::Bool => self
                     .llvm_int_type(return_type)?
                     .fn_type(&parameter_types, false),
 
@@ -131,7 +183,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             return Err("`main` must not take parameters".to_owned());
         }
 
-        if function.hir.return_type != Type::I64 {
+        if function.hir.return_type != Type::Integer(IntegerType::I64) {
             return Err("`main` must return i64".to_owned());
         }
 
@@ -183,7 +235,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 .collect::<Result<Vec<BasicMetadataTypeEnum>, String>>()?;
 
             let function_type = match &function.hir.return_type {
-                Type::I64 | Type::Bool => self
+                Type::Integer(_) | Type::Bool => self
                     .llvm_int_type(&function.hir.return_type)?
                     .fn_type(&parameter_types, false),
 
@@ -296,14 +348,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 array,
                 index,
                 array_size,
-            } => {
-                self.emit_array_element_pointer(
-                    *array,
-                    index,
-                    *array_size,
-                    operands,
-                )
-            }
+            } => self.emit_array_element_pointer(*array, index, *array_size, operands),
         }
     }
 
@@ -325,13 +370,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         let zero = self.context.i64_type().const_zero();
 
         unsafe {
-            self.builder.build_gep(
-                *llvm_type,
-                *pointer,
-                &[zero, index],
-                "array.element.ptr"
-            )
-        }.map_err(|error| error.to_string())
+            self.builder
+                .build_gep(*llvm_type, *pointer, &[zero, index], "array.element.ptr")
+        }
+        .map_err(|error| error.to_string())
     }
 
     fn emit_statement(
@@ -560,12 +602,8 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     return Err("index base lost its array type".to_owned());
                 };
 
-                let element_pointer = self.emit_array_element_pointer(
-                    *symbol,
-                    index,
-                    *size,
-                    operands
-                )?;
+                let element_pointer =
+                    self.emit_array_element_pointer(*symbol, index, *size, operands)?;
 
                 let element_type = self.llvm_int_type(&expression.type_)?;
 
@@ -583,7 +621,25 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirExpressionData::Integer(value) => {
-                Ok(self.context.i64_type().const_int(*value as u64, true))
+                let integer_type = expression
+                    .type_
+                    .as_integer()
+                    .ok_or_else(|| {
+                        "integer expression lost its integer type".to_owned()
+                    })?;
+
+                let llvm_type = self.llvm_int_type(&expression.type_)?;
+
+                let bits = integer_bit_pattern(
+                    *value,
+                    integer_type,
+                    &self.target
+                );
+
+                Ok(llvm_type.const_int(
+                    bits,
+                    integer_type.is_signed()
+                ))
             }
 
             HirExpressionData::Symbol(symbol_id) => {
@@ -612,8 +668,17 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 }
 
                 match self.program.values.get(*symbol_id) {
-                    Some(ComptimeValue::I64(value)) => {
-                        Ok(self.context.i64_type().const_int(*value as u64, true))
+                    Some(ComptimeValue::Integer { value, type_ }) => {
+                        let semantic_type = Type::Integer(*type_);
+                        let llvm_type = self.llvm_int_type(&semantic_type)?;
+
+                        let bits = integer_bit_pattern(
+                            *value,
+                            *type_,
+                            &self.target
+                        );
+
+                        Ok(llvm_type.const_int(bits, type_.is_signed()))
                     }
 
                     Some(ComptimeValue::Bool(value)) => {
@@ -624,29 +689,74 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 }
             }
 
+            HirExpressionData::Unary {
+                operator,
+                operand
+            } => {
+                let operand = self.emit_expression(operand, operands)?;
+
+                match operator {
+                    UnaryOperator::Negate => {
+                        self.builder
+                            .build_int_neg(
+                                operand,
+                                "negtmp"
+                            )
+                            .map_err(|error| error.to_string())
+                    }
+                }
+            }
+
             HirExpressionData::Binary { lhs, operator, rhs } => {
+                let integer_type = lhs.type_.as_integer();
+                let signed = integer_type.is_some_and(IntegerType::is_signed);
+
                 let lhs = self.emit_expression(lhs, operands)?;
                 let rhs = self.emit_expression(rhs, operands)?;
 
                 let result = match operator {
                     BinaryOperator::LessThanOrEqual => {
+                        let predicate = if signed {
+                            IntPredicate::SLE
+                        } else {
+                            IntPredicate::ULE
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SLE, lhs, rhs, "sletmp")
+                            .build_int_compare(predicate, lhs, rhs, "letmp")
                     }
 
                     BinaryOperator::LessThan => {
+                        let predicate = if signed {
+                            IntPredicate::SLT
+                        } else {
+                            IntPredicate::ULT
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SLT, lhs, rhs, "slttmp")
+                            .build_int_compare(predicate, lhs, rhs, "lttmp")
                     }
 
                     BinaryOperator::GreaterThanOrEqual => {
+                        let predicate = if signed {
+                            IntPredicate::SGE
+                        } else {
+                            IntPredicate::UGE
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SGE, lhs, rhs, "sgetmp")
+                            .build_int_compare(predicate, lhs, rhs, "getmp")
                     }
 
                     BinaryOperator::GreaterThan => {
+                        let predicate = if signed {
+                            IntPredicate::SGT
+                        } else {
+                            IntPredicate::UGT
+                        };
+
                         self.builder
-                            .build_int_compare(IntPredicate::SGT, lhs, rhs, "sgttmp")
+                            .build_int_compare(predicate, lhs, rhs, "gttmp")
                     }
 
                     BinaryOperator::NotEqual => {
@@ -659,13 +769,27 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                             .build_int_compare(IntPredicate::EQ, lhs, rhs, "eqltmp")
                     }
 
-                    BinaryOperator::Add => self.builder.build_int_add(lhs, rhs, "addtmp"),
+                    BinaryOperator::Add => {
+                        self.builder.build_int_add(lhs, rhs, "addtmp")
+                    }
 
-                    BinaryOperator::Subtract => self.builder.build_int_sub(lhs, rhs, "subtmp"),
+                    BinaryOperator::Subtract => {
+                        self.builder.build_int_sub(lhs, rhs, "subtmp")
+                    }
 
-                    BinaryOperator::Multiply => self.builder.build_int_mul(lhs, rhs, "multmp"),
+                    BinaryOperator::Multiply => {
+                        self.builder.build_int_mul(lhs, rhs, "multmp")
+                    }
 
-                    BinaryOperator::Divide => self.builder.build_int_signed_div(lhs, rhs, "divtmp"),
+                    BinaryOperator::Divide if signed => {
+                        self.builder
+                            .build_int_signed_div(lhs, rhs, "divtmp")
+                    }
+
+                    BinaryOperator::Divide => {
+                        self.builder
+                            .build_int_unsigned_div(lhs, rhs, "divtmp")
+                    }
                 }
                 .map_err(|error| error.to_string())?;
 
@@ -704,23 +828,21 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
         let invalid_block = self.context.append_basic_block(function, "index.invalid");
 
-        let i64_type = self.context.i64_type();
-        let zero = i64_type.const_zero();
-        let length = i64_type.const_int(array_size as u64, false);
+        let index_type = index.get_type();
 
-        let nonnegative = self
-            .builder
-            .build_int_compare(IntPredicate::SGE, index, zero, "index.nonnegative")
-            .map_err(|error| error.to_string())?;
-
-        let below_length = self
-            .builder
-            .build_int_compare(IntPredicate::SLT, index, length, "index.below_length")
-            .map_err(|error| error.to_string())?;
+        let length = index_type.const_int(
+            array_size as u64,
+            false,
+        );
 
         let valid = self
             .builder
-            .build_and(nonnegative, below_length, "index.in_bounds")
+            .build_int_compare(
+                IntPredicate::ULT,
+                index,
+                length,
+                "index.in_bounds"
+            )
             .map_err(|error| error.to_string())?;
 
         self.builder
@@ -835,9 +957,34 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     }
 
     fn llvm_int_type(&self, type_: &Type) -> Result<IntType<'ctx>, String> {
+        use Type::Integer;
+        use IntegerType::*;
         match type_ {
-            Type::I64 => Ok(self.context.i64_type()),
+            Integer(U8 | I8) => Ok(self.context.i8_type()),
+            Integer(U16 | I16) => Ok(self.context.i16_type()),
+            Integer(U32 | I32) => Ok(self.context.i32_type()),
+            Integer(U64 | I64) => Ok(self.context.i64_type()),
+
+            Integer(Usize | Isize) => {
+                let llvm_type = self.context.ptr_sized_int_type(
+                    &self.target_data,
+                    None,
+                );
+
+                if llvm_type.get_bit_width() != self.target.pointer_bit_width {
+                    return Err(format!(
+                        "LLVM pointer-sized integer has width {}, \
+                        but semantic analysis expects {}",
+                        llvm_type.get_bit_width(),
+                        self.target.pointer_bit_width
+                    ));
+                }
+
+                Ok(llvm_type)
+            }
+
             Type::Bool => Ok(self.context.bool_type()),
+
             _ => Err(format!("unsupported LLVM value type: {type_:?}")),
         }
     }
@@ -858,6 +1005,21 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
 fn llvm_function_name(function_id: FunctionId) -> String {
     format!("flang_fn_{}", function_id.index())
+}
+
+fn integer_bit_pattern(
+    value: i128,
+    integer_type: IntegerType,
+    target: &TargetInfo
+) -> u64 {
+    let width = integer_type.bit_width(target);
+
+    if width == 64 {
+        value as u64
+    } else {
+        let mask = (1u64 << width) - 1;
+        (value as u64) & mask
+    }
 }
 
 enum EmitFlow {

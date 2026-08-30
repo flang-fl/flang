@@ -149,7 +149,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.fl",
-          "match": "\\b(?:i64|bool|unit)\\b"
+          "match": "\\b(?:u8|i8|u16|i16|u32|i32|u64|i64|usize|isize|bool|unit)\\b"
         },
         {
           "name": "support.function.builtin.fl",
@@ -173,7 +173,12 @@
         },
         {
           "name": "constant.numeric.integer.decimal.fl",
-          "match": "(?<![A-Za-z0-9_])[0-9]+(?![A-Za-z0-9_])"
+          "match": "(?<![A-Za-z0-9_])([0-9]+)(u8|i8|u16|i16|u32|i32|u64|i64|usize|isize)?(?![A-Za-z0-9_])",
+          "captures": {
+            "2": {
+              "name": "storage.type.numeric.fl"
+            }
+          }
         },
         {
           "name": "constant.other.fl",

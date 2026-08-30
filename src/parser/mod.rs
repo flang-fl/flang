@@ -1,10 +1,6 @@
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{
-    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
-    Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression,
-    TypeExpressionData, While,
-};
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, While};
 use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
 use std::cmp::min;
@@ -77,8 +73,32 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         self.parse_binary_expression(0)
     }
 
+    fn parse_prefix_expression(&mut self) -> Option<Expression> {
+        if self.peek_is(TokenKind::Minus) {
+            let minus = self.expect(
+                TokenKind::Minus,
+                "expected `-`"
+            )?;
+
+            let operand = self.parse_prefix_expression()?;
+
+            return Some(Expression {
+                span: self.source.fromto(
+                    minus.span,
+                    operand.span
+                ),
+                data: ExpressionData::Unary {
+                    operator: UnaryOperator::Negate,
+                    operand: Box::new(operand)
+                }
+            });
+        }
+
+        self.parse_postfix_expression()
+    }
+
     fn parse_binary_expression(&mut self, minimum_precedence: u8) -> Option<Expression> {
-        let mut lhs = self.parse_postfix_expression()?;
+        let mut lhs = self.parse_prefix_expression()?;
 
         loop {
             let Some((operator, precedence)) = self.peek_binary_operator() else {
