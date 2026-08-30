@@ -3,6 +3,21 @@ use crate::semantic::symbols::SymbolId;
 use crate::semantic::types::{IntegerType, Type};
 use std::cmp::PartialEq;
 use std::collections::HashMap;
+use crate::parser::ast::FunctionExpression;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionTemplateId(u32);
+
+impl FunctionTemplateId {
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionTemplate {
+    pub ast: FunctionExpression
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeValue {
@@ -11,6 +26,7 @@ pub enum ComptimeValue {
         type_: IntegerType
     },
     Function(FunctionId),
+    FunctionTemplate(FunctionTemplateId),
     Type(Type),
     Bool(bool),
     Unit,
@@ -78,6 +94,37 @@ impl FunctionStore {
 }
 
 #[derive(Debug)]
+pub struct FunctionTemplateStore {
+    templates: Vec<FunctionTemplate>
+}
+
+impl FunctionTemplateStore {
+    pub fn new() -> Self {
+        Self {
+            templates: Vec::new()
+        }
+    }
+
+    pub fn insert(
+        &mut self,
+        template: FunctionTemplate
+    ) -> FunctionTemplateId {
+        let id = FunctionTemplateId(self.templates.len() as u32);
+
+        self.templates.push(template);
+        id
+    }
+
+    pub fn get(
+        &self,
+        id: FunctionTemplateId
+    ) -> Option<&FunctionTemplate> {
+        self.templates.get(id.0 as usize)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ComptimeFunction {
     pub hir: HirFunctionExpression,
+    pub captures: HashMap<SymbolId, ComptimeValue>
 }

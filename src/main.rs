@@ -74,6 +74,8 @@ fn main() {
     match compile(file, target_info) {
         Err(diagnostics) => {
             diagnostics.print_diagnostics(&mut file_manager);
+
+            std::process::exit(1);
         }
         Ok((llvm, timings)) => {
             let source_path = Path::new(&file.name);

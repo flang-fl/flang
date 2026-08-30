@@ -1,6 +1,10 @@
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, While};
+use crate::parser::ast::{
+    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
+    Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression,
+    TypeExpressionData, UnaryOperator, While,
+};
 use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
 use std::cmp::min;
@@ -75,22 +79,16 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
     fn parse_prefix_expression(&mut self) -> Option<Expression> {
         if self.peek_is(TokenKind::Minus) {
-            let minus = self.expect(
-                TokenKind::Minus,
-                "expected `-`"
-            )?;
+            let minus = self.expect(TokenKind::Minus, "expected `-`")?;
 
             let operand = self.parse_prefix_expression()?;
 
             return Some(Expression {
-                span: self.source.fromto(
-                    minus.span,
-                    operand.span
-                ),
+                span: self.source.fromto(minus.span, operand.span),
                 data: ExpressionData::Unary {
                     operator: UnaryOperator::Negate,
-                    operand: Box::new(operand)
-                }
+                    operand: Box::new(operand),
+                },
             });
         }
 
@@ -135,6 +133,8 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 expression = self.parse_call_expression(expression)?;
             } else if self.peek_is(TokenKind::LBrack) {
                 expression = self.parse_index_expression(expression)?;
+            } else if self.looks_like_specialization() {
+                expression = self.parse_specialization_expression(expression)?;
             } else {
                 break;
             }
@@ -143,17 +143,87 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         Some(expression)
     }
 
+    fn looks_like_specialization(&self) -> bool {
+        if !self.peek_is(TokenKind::LessThan) {
+            return false;
+        }
+
+        let mut index = self.index + 1;
+        let mut nested_parens = 0usize;
+
+        while let Some(token) = self.tokens.get(index) {
+            match token.kind {
+                TokenKind::LParen => nested_parens += 1,
+
+                TokenKind::RParen if nested_parens > 0 => {
+                    nested_parens -= 1;
+                }
+
+                TokenKind::GreaterThan if nested_parens == 0 => {
+                    return self.tokens
+                        .get(index + 1)
+                        .is_some_and(|next| {
+                            next.kind == TokenKind::LParen
+                        })
+                }
+
+                TokenKind::Semi
+                | TokenKind::LCurly
+                | TokenKind::RCurly => return false,
+
+                _ => {}
+            }
+
+            index += 1;
+        }
+
+        false
+    }
+
+    /// Temporary fix for something like make_adder<a > b> thinking it's actually make_adder<a> b >
+    fn parse_specialization_expression(
+        &mut self,
+        callee: Expression
+    ) -> Option<Expression> {
+        self.expect(TokenKind::LessThan, "Expected `<`")?;
+
+        let mut arguments = Vec::new();
+
+        while !self.peek_is(TokenKind::GreaterThan) {
+            arguments.push(self.parse_prefix_expression()?);
+
+            if self.peek_is(TokenKind::Comma) {
+                self.consume();
+            } else {
+                break;
+            }
+        }
+
+        let greater = self.expect(
+            TokenKind::GreaterThan,
+            "Expected `>` after compile-time arguments"
+        )?;
+
+        Some(Expression {
+            span: self.source.fromto(callee.span, greater.span),
+            data: ExpressionData::Specialize {
+                callee: Box::new(callee),
+                arguments,
+            },
+        })
+    }
+
     fn parse_index_expression(&mut self, base: Expression) -> Option<Expression> {
         self.expect(TokenKind::LBrack, "Expected `[`")?;
         let index = self.parse_expression()?;
         let r_brack = self.expect(TokenKind::RBrack, "Expected `]`")?;
-        
+
         Some(Expression {
             span: self.source.fromto(base.span, r_brack.span),
             data: ExpressionData::Index {
                 base: Box::new(base),
                 index: Box::new(index),
-            }
+            },
         })
     }
 
@@ -274,34 +344,52 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         None
     }
 
-    fn parse_function_literal(&mut self) -> Option<Expression> {
-        let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
-
-        self.expect(TokenKind::LParen, "Expected `)`")?;
-
+    fn parse_parameters_until(&mut self, closing: TokenKind) -> Option<Vec<Parameter>> {
         let mut parameters = Vec::new();
-        while !self.peek_is(TokenKind::RParen) {
-            let identifier = self.expect(
-                TokenKind::Identifier,
-                "Expected identifier of function parameters",
-            )?;
-            self.expect(TokenKind::Colon, "Expected `:`")?;
-            let type_ = self.parse_type_expression()?;
+
+        while !self.peek_is(closing) {
+            let identifier = self.expect(TokenKind::Identifier, "Expected parameter name")?;
+
+            self.expect(TokenKind::Colon, "Expected `:` after parameter name")?;
+
+            let type_annotation = self.parse_type_expression()?;
 
             parameters.push(Parameter {
-                span: self.source.fromto(identifier.span, type_.span),
+                span: self.source.fromto(identifier.span, type_annotation.span),
                 name: identifier.span,
-                type_annotation: type_,
+                type_annotation,
             });
 
             if self.peek_is(TokenKind::Comma) {
-                self.expect(TokenKind::Comma, "Expected `,`")?;
+                self.consume();
             } else {
                 break;
             }
         }
 
-        let rparen = self.expect(TokenKind::RParen, "Expected `)`")?;
+        Some(parameters)
+    }
+
+    fn parse_function_literal(&mut self) -> Option<Expression> {
+        let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
+
+        let comptime_args = if self.peek_is(TokenKind::LessThan) {
+            self.expect(TokenKind::LessThan, "Expected `<` before comptime args")?;
+
+            let parameters = self.parse_parameters_until(TokenKind::GreaterThan)?;
+
+            self.expect(TokenKind::GreaterThan, "Expected `>` after comptime args")?;
+
+            parameters
+        } else {
+            Vec::new()
+        };
+
+        self.expect(TokenKind::LParen, "Expected `(` before runtime parameters")?;
+
+        let runtime_args = self.parse_parameters_until(TokenKind::RParen)?;
+
+        let rparen = self.expect(TokenKind::RParen, "Expected `)` after runtime parameters")?;
 
         let return_type = if self.peek_is(TokenKind::RArrow) {
             self.expect(TokenKind::RArrow, "Expected `->`")?;
@@ -318,7 +406,8 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let end_span = body.span;
 
         let data = ExpressionData::Function(FunctionExpression {
-            parameters,
+            comptime_args,
+            runtime_args,
             return_type,
             body,
         });
@@ -437,7 +526,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             Some(TokenKind::If) => self.parse_if_statement(),
             Some(TokenKind::Identifier) => {
                 let target_or_expression = self.parse_expression()?;
-                
+
                 if self.peek_is(TokenKind::Eq) {
                     self.expect(TokenKind::Eq, "Expected `=` for assignment")?;
 

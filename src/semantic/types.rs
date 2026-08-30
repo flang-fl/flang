@@ -1,3 +1,4 @@
+use crate::comptime::FunctionTemplateId;
 use crate::TargetInfo;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +14,7 @@ pub enum Type {
         parameters: Vec<Type>,
         return_type: Box<Type>,
     },
+    FunctionTemplate(FunctionTemplateId),
     Error,
     Unknown,
     Type,
@@ -31,7 +33,22 @@ impl Type {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ComptimeKey {
+    Integer {
+        value: i128,
+        type_: IntegerType
+    },
+    Bool(bool)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SpecializationKey {
+    pub template: FunctionTemplateId,
+    pub arguments: Vec<ComptimeKey>
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntegerType {
     U8,
     I8,

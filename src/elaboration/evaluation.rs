@@ -190,9 +190,18 @@ impl Elaborator<'_> {
             HirExpressionData::Function(function) => {
                 let function_id = self.functions.insert(ComptimeFunction {
                     hir: function.clone(),
+                    captures: HashMap::new(),
                 });
 
                 ComptimeValue::Function(function_id)
+            }
+
+            HirExpressionData::FunctionTemplate(template_id) => {
+                ComptimeValue::FunctionTemplate(*template_id)
+            }
+
+            HirExpressionData::KnownFunction(function_id) => {
+                ComptimeValue::Function(*function_id)
             }
 
             HirExpressionData::Integer(value) => {
@@ -432,24 +441,27 @@ impl Elaborator<'_> {
                     return ComptimeValue::Error;
                 }
 
-                let function = match self.functions.get(function_id) {
-                    Some(function) => function.hir.clone(),
+                let stored_function = match self.functions.get(function_id) {
+                    Some(function) => function.clone(),
                     None => {
-                        panic!("Test Explode");
                         return ComptimeValue::Error;
                     }
                 };
 
-                let frame = function
+                let mut frame = stored_function.captures.clone();
+
+                for (parameter, argument) in stored_function
+                    .hir
                     .parameters
                     .iter()
                     .zip(argument_values)
-                    .map(|(parameter, argument)| (parameter.symbol, argument))
-                    .collect::<HashMap<_, _>>();
+                {
+                    frame.insert(parameter.symbol, argument);
+                }
 
                 self.frames.push(frame);
 
-                let result = self.evaluate_function_body(&function);
+                let result = self.evaluate_function_body(&stored_function.hir);
 
                 self.frames.pop();
 
@@ -516,6 +528,13 @@ impl Elaborator<'_> {
                         format!(
                             "parameter `{}` is unavailable outside a compile-time function call",
                             symbol_info.name,
+                        )
+                    }
+
+                    SymbolKind::ComptimeParameter => {
+                        format!(
+                            "comptime parameter `{}` is unavailable outside its specialization",
+                            symbol_info.name
                         )
                     }
 

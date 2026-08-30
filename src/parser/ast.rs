@@ -52,6 +52,10 @@ pub enum ExpressionData {
         operator: BinaryOperator,
         rhs: Box<Expression>,
     },
+    Specialize {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>
+    },
     Call {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
@@ -99,7 +103,8 @@ impl BinaryOperator {
 
 #[derive(Debug, Clone)]
 pub struct FunctionExpression {
-    pub parameters: Vec<Parameter>,
+    pub comptime_args: Vec<Parameter>,
+    pub runtime_args: Vec<Parameter>,
     pub return_type: TypeExpression,
     pub body: Block,
 }

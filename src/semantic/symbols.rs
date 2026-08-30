@@ -98,11 +98,12 @@ pub enum SymbolKind {
         phase: Phase,
         mutable: bool,
     },
+    ComptimeParameter,
     Parameter,
     Local {
         mutable: bool,
     },
     ExternFunction {
         link_name: String,
-    }
+    },
 }

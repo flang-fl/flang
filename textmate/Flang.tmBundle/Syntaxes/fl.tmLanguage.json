@@ -75,13 +75,79 @@
     "function-literals": {
       "patterns": [
         {
-          "name": "meta.function.parameters.fl",
-          "begin": "\\b(fn)\\s*(\\()",
+          "name": "meta.function.signature.fl",
+          "begin": "\\b(fn)\\b",
           "beginCaptures": {
             "1": {
               "name": "storage.type.function.fl"
+            }
+          },
+          "end": "(?=\\{)",
+          "patterns": [
+            {
+              "include": "#comptime-parameters"
             },
-            "2": {
+            {
+              "include": "#runtime-parameters"
+            },
+            {
+              "include": "#builtins"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        }
+      ]
+    },
+    "comptime-parameters": {
+      "patterns": [
+        {
+          "name": "meta.function.parameters.comptime.fl",
+          "begin": "(<)",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.parameters.comptime.begin.fl"
+            }
+          },
+          "end": "(>)",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.parameters.comptime.end.fl"
+            }
+          },
+          "patterns": [
+            {
+              "match": "\\b([A-Za-z][A-Za-z0-9_]*)(?=\\s*:)",
+              "captures": {
+                "1": {
+                  "name": "variable.parameter.comptime.fl"
+                }
+              }
+            },
+            {
+              "include": "#builtins"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        }
+      ]
+    },
+    "runtime-parameters": {
+      "patterns": [
+        {
+          "name": "meta.function.parameters.runtime.fl",
+          "begin": "(\\()",
+          "beginCaptures": {
+            "1": {
               "name": "punctuation.section.parameters.begin.fl"
             }
           },
@@ -159,6 +225,41 @@
     },
     "function-calls": {
       "patterns": [
+        {
+          "name": "meta.function-call.specialized.fl",
+          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(\\s*)(<)",
+          "beginCaptures": {
+            "1": {
+              "name": "variable.function.fl"
+            },
+            "3": {
+              "name": "punctuation.definition.arguments.comptime.begin.fl"
+            }
+          },
+          "end": "(>)(?=\\s*\\()",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.arguments.comptime.end.fl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#builtins"
+            },
+            {
+              "include": "#function-calls"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#operators"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        },
         {
           "name": "variable.function.fl",
           "match": "\\b[A-Za-z][A-Za-z0-9_]*\\b(?=\\s*\\()"

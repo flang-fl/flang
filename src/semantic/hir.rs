@@ -1,3 +1,4 @@
+use crate::comptime::{FunctionId, FunctionTemplateId};
 use crate::parser::ast::{BinaryOperator, Expression, Phase, UnaryOperator};
 use crate::semantic::symbols::SymbolId;
 use crate::semantic::types::Type;
@@ -66,6 +67,8 @@ impl HirExpression {
 #[derive(Debug, Clone)]
 pub enum HirExpressionData {
     Function(HirFunctionExpression),
+    FunctionTemplate(FunctionTemplateId),
+    KnownFunction(FunctionId),
     Integer(i128),
     Symbol(SymbolId),
     Bool(bool),

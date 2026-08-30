@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use crate::comptime::{ComptimeValue, FunctionStore, ValueStore};
+use std::collections::{HashMap, HashSet};
+use crate::comptime::{ComptimeValue, FunctionId, FunctionStore, FunctionTemplateStore, ValueStore};
 use crate::diagnostics::Diagnostic;
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
 use crate::parser::ast::{ItemData, Program};
 use crate::semantic::hir::{HirBinding, HirProgram};
 use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
-use crate::semantic::types::{IntegerType, Type};
+use crate::semantic::types::{IntegerType, SpecializationKey, Type};
 use crate::source::SourceFile;
 use crate::TargetInfo;
 
@@ -49,7 +49,10 @@ pub struct Elaborator<'src> {
     
     pub(super) values: ValueStore,
     pub(super) functions: FunctionStore,
-    
+    pub(super) function_templates: FunctionTemplateStore,
+    pub(super) specializations: HashMap<SpecializationKey, FunctionId>,
+    pub(super) active_specializations: HashSet<SpecializationKey>,
+
     pub(super) frames:
         Vec<HashMap<SymbolId, ComptimeValue>>
 }
@@ -155,6 +158,9 @@ impl<'src> Elaborator<'src> {
             
             values: ValueStore::new(),
             functions: FunctionStore::new(),
+            function_templates: FunctionTemplateStore::new(),
+            specializations: HashMap::new(),
+            active_specializations: HashSet::new(),
             frames: Vec::new(),
         }
     }

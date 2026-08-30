@@ -285,6 +285,55 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
         let mut operands = Operands::<'ctx>::new();
 
+        for (symbol, value) in &function.captures {
+            let llvm_value = match value {
+                ComptimeValue::Integer {
+                    value,
+                    type_,
+                } => {
+                    let semantic_type =
+                        Type::Integer(*type_);
+
+                    let llvm_type =
+                        self.llvm_int_type(
+                            &semantic_type,
+                        )?;
+
+                    let bits = integer_bit_pattern(
+                        *value,
+                        *type_,
+                        &self.target,
+                    );
+
+                    llvm_type.const_int(
+                        bits,
+                        type_.is_signed(),
+                    )
+                }
+
+                ComptimeValue::Bool(value) => {
+                    self.context
+                        .bool_type()
+                        .const_int(
+                            u64::from(*value),
+                            false,
+                        )
+                }
+
+                unsupported => {
+                    return Err(format!(
+                        "unsupported compile-time capture \
+                   in LLVM function: {unsupported:?}"
+                    ));
+                }
+            };
+
+            operands.insert(
+                *symbol,
+                LocalOperand::Value(llvm_value)
+            );
+        }
+
         for (index, (parameter, llvm_parameter)) in function
             .hir
             .parameters
@@ -804,7 +853,13 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 Ok(self.context.bool_type().const_int(u64::from(*bool), false))
             }
 
-            HirExpressionData::Function(_) | HirExpressionData::Error => {
+            HirExpressionData::FunctionTemplate(_) => {
+                Err(
+                    "an unspecialized function template reached LLVM value emission".to_owned()
+                )
+            }
+
+            HirExpressionData::Function(_) | HirExpressionData::Error | HirExpressionData::KnownFunction(_) => {
                 Err("expression is not supported by Inkwell backend yet".to_owned())
             }
         }
@@ -898,25 +953,60 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         Ok(value)
     }
 
-    fn resolve_function(&self, callee: &HirExpression) -> Result<FunctionValue<'ctx>, String> {
-        let HirExpressionData::Symbol(symbol_id) = &callee.data else {
-            return Err("Inkwell backend only supports statically known callees rn".to_owned());
-        };
+    fn resolve_function(
+        &self,
+        callee: &HirExpression,
+    ) -> Result<FunctionValue<'ctx>, String> {
+        match &callee.data {
+            HirExpressionData::KnownFunction(
+                function_id,
+            ) => {
+                self.functions
+                    .get(function_id)
+                    .copied()
+                    .ok_or_else(|| {
+                        format!(
+                            "specialized function {:?} \
+                           was not declared",
+                            function_id,
+                        )
+                    })
+            }
 
-        if let Some(function) = self.external_functions.get(symbol_id) {
-            return Ok(*function);
+            HirExpressionData::Symbol(symbol_id) => {
+                if let Some(function) =
+                    self.external_functions.get(symbol_id)
+                {
+                    return Ok(*function);
+                }
+
+                let Some(ComptimeValue::Function(
+                             function_id,
+                         )) = self.program.values.get(*symbol_id)
+                else {
+                    return Err(
+                        "callee does not have a \
+                       compile-time function value"
+                            .to_owned(),
+                    );
+                };
+
+                self.functions
+                    .get(function_id)
+                    .copied()
+                    .ok_or_else(|| {
+                        format!(
+                            "function {:?} was not declared",
+                            function_id,
+                        )
+                    })
+            }
+
+            other => Err(format!(
+                "Inkwell backend only supports \
+               statically known callees, found {other:?}"
+            )),
         }
-
-        let Some(ComptimeValue::Function(function_id)) = self.program.values.get(*symbol_id) else {
-            return Err("callee does not have a compile-time function value".to_owned());
-        };
-
-        self.functions.get(function_id).copied().ok_or_else(|| {
-            format!(
-                "internal error: function {:?} was not declared",
-                function_id
-            )
-        })
     }
 
     fn emit_zero_array_binding(
