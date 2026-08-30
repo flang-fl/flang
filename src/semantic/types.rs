@@ -63,33 +63,59 @@ impl IntegerType {
         }
     }
 
-    pub fn maximum_literal(self, target: &TargetInfo) -> u64 {
+    pub fn minimum_value(self, target: &TargetInfo) -> i128 {
+        use IntegerType::*;
+
+        match self {
+            U8 | U16 | U32 | U64 | Usize => 0,
+
+            I8 => i8::MIN as i128,
+            I16 => i16::MIN as i128,
+            I32 => i32::MIN as i128,
+            I64 => i64::MIN as i128,
+
+            Isize => match target.pointer_bit_width {
+                32 => i32::MIN as i128,
+                64 => i64::MIN as i128,
+
+                width => {
+                    panic!("unsupported pointer width: {width}")
+                }
+            },
+        }
+    }
+
+    pub fn maximum_value(self, target: &TargetInfo) -> i128 {
         use IntegerType::*;
         match self {
-            U8 => u8::MAX as u64,
-            I8 => i8::MAX as u64,
-            U16 => u16::MAX as u64,
-            I16 => i16::MAX as u64,
-            U32 => u32::MAX as u64,
-            I32 => i32::MAX as u64,
-            U64 => u64::MAX,
-            I64 => i64::MAX as u64,
+            U8 => u8::MAX as i128,
+            I8 => i8::MAX as i128,
+            U16 => u16::MAX as i128,
+            I16 => i16::MAX as i128,
+            U32 => u32::MAX as i128,
+            I32 => i32::MAX as i128,
+            U64 => u64::MAX as i128,
+            I64 => i64::MAX as i128,
             Isize => match target.pointer_bit_width {
-                32 => i32::MAX as u64,
-                64 => i64::MAX as u64,
+                32 => i32::MAX as i128,
+                64 => i64::MAX as i128,
                 width => {
                     panic!("unsupported pointer width: {width}")
                 }
             },
 
             Usize => match target.pointer_bit_width {
-                32 => u32::MAX as u64,
-                64 => u64::MAX,
+                32 => u32::MAX as i128,
+                64 => u64::MAX as i128,
                 width => {
                     panic!("unsupported pointer width: {width}")
                 }
             },
         }
+    }
+
+    pub fn contains(self, value: i128, target: &TargetInfo) -> bool {
+        value >= self.minimum_value(target) && value <= self.maximum_value(target)
     }
 
     pub fn name(self) -> &'static str {

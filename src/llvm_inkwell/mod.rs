@@ -1,6 +1,6 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue, FunctionId};
 use crate::elaboration::ElaboratedProgram;
-use crate::parser::ast::BinaryOperator;
+use crate::parser::ast::{BinaryOperator, UnaryOperator};
 use crate::semantic::hir::{
     HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirPlace, HirPlaceData,
     HirStatement, HirStatementData,
@@ -621,14 +621,24 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirExpressionData::Integer(value) => {
+                let integer_type = expression
+                    .type_
+                    .as_integer()
+                    .ok_or_else(|| {
+                        "integer expression lost its integer type".to_owned()
+                    })?;
+
                 let llvm_type = self.llvm_int_type(&expression.type_)?;
 
-                Ok(llvm_type.const_int(
+                let bits = integer_bit_pattern(
                     *value,
-                    expression
-                        .type_
-                        .as_integer()
-                        .is_some_and(IntegerType::is_signed),
+                    integer_type,
+                    &self.target
+                );
+
+                Ok(llvm_type.const_int(
+                    bits,
+                    integer_type.is_signed()
                 ))
             }
 
@@ -661,7 +671,14 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     Some(ComptimeValue::Integer { value, type_ }) => {
                         let semantic_type = Type::Integer(*type_);
                         let llvm_type = self.llvm_int_type(&semantic_type)?;
-                        Ok(llvm_type.const_int(*value, type_.is_signed()))
+
+                        let bits = integer_bit_pattern(
+                            *value,
+                            *type_,
+                            &self.target
+                        );
+
+                        Ok(llvm_type.const_int(bits, type_.is_signed()))
                     }
 
                     Some(ComptimeValue::Bool(value)) => {
@@ -669,6 +686,24 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     }
 
                     _ => Err("symbol has no available LLVM value".to_owned()),
+                }
+            }
+
+            HirExpressionData::Unary {
+                operator,
+                operand
+            } => {
+                let operand = self.emit_expression(operand, operands)?;
+
+                match operator {
+                    UnaryOperator::Negate => {
+                        self.builder
+                            .build_int_neg(
+                                operand,
+                                "negtmp"
+                            )
+                            .map_err(|error| error.to_string())
+                    }
                 }
             }
 
@@ -970,6 +1005,21 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
 fn llvm_function_name(function_id: FunctionId) -> String {
     format!("flang_fn_{}", function_id.index())
+}
+
+fn integer_bit_pattern(
+    value: i128,
+    integer_type: IntegerType,
+    target: &TargetInfo
+) -> u64 {
+    let width = integer_type.bit_width(target);
+
+    if width == 64 {
+        value as u64
+    } else {
+        let mask = (1u64 << width) - 1;
+        (value as u64) & mask
+    }
 }
 
 enum EmitFlow {

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeValue {
     Integer {
-        value: u64,
+        value: i128,
         type_: IntegerType
     },
     Function(FunctionId),

@@ -1,7 +1,7 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue};
 use crate::diagnostics::Diagnostic;
 use crate::elaboration::Elaborator;
-use crate::parser::ast::{BinaryOperator, Phase};
+use crate::parser::ast::{BinaryOperator, Phase, UnaryOperator};
 use crate::semantic::hir::{
     HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirPlaceData,
     HirStatement, HirStatementData,
@@ -206,6 +206,79 @@ impl Elaborator<'_> {
                 }
             }
 
+            HirExpressionData::Unary {
+                operator,
+                operand
+            } => {
+                let operand = self.evaluate_expression(operand);
+
+                match (operator, operand) {
+                    (
+                        UnaryOperator::Negate,
+                        ComptimeValue::Integer {
+                            value,
+                            type_
+                        },
+                    ) => {
+                        if !type_.is_signed() {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Cannot negate unsigned integer",
+                                expression.span,
+                                format!(
+                                    "`{}` is unsigned",
+                                    type_.name()
+                                )
+                            ));
+
+                            return ComptimeValue::Error;
+                        }
+
+                        let Some(value) = value.checked_neg() else {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Integer overflow",
+                                expression.span,
+                                "negation overflowed"
+                            ));
+
+                            return ComptimeValue::Error;
+                        };
+
+                        if !type_.contains(
+                            value,
+                            &self.target
+                        ) {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Integer overflow",
+                                expression.span,
+                                format!(
+                                    "result `{value}` does not fit in `{}`",
+                                    type_.name()
+                                )
+                            ));
+
+                            return ComptimeValue::Error;
+                        }
+
+                        ComptimeValue::Integer {
+                            value,
+                            type_
+                        }
+                    }
+
+                    (_, ComptimeValue::Error) => ComptimeValue::Error,
+
+                    (UnaryOperator::Negate, _) => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Evil bad",
+                            expression.span,
+                            "Fix my diagnostic later"
+                        ));
+
+                        ComptimeValue::Error
+                    }
+                }
+            }
+
             HirExpressionData::Binary { lhs, operator, rhs } => {
                 let lhs = self.evaluate_expression(lhs);
                 let rhs = self.evaluate_expression(rhs);
@@ -286,7 +359,10 @@ impl Elaborator<'_> {
                                     return ComptimeValue::Error;
                                 };
 
-                                if result > lhs_type.maximum_literal(&self.target) {
+                                if !lhs_type.contains(
+                                    result,
+                                    &self.target
+                                ) {
                                     self.diagnostics.push(Diagnostic::error(
                                         "Integer overflow",
                                         expression.span,

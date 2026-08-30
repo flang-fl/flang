@@ -1,9 +1,6 @@
 use super::Elaborator;
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{
-    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, If, Statement,
-    StatementData, TypeExpression, TypeExpressionData, While,
-};
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, If, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, While};
 use crate::semantic::hir::{HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression, HirParameter, HirPlace, HirPlaceData, HirStatement, HirStatementData};
 use crate::semantic::symbols::{Symbol, SymbolId, SymbolKind};
 use crate::semantic::types::{IntegerType, Type};
@@ -268,6 +265,80 @@ impl Elaborator<'_> {
                 }
             }
 
+            ExpressionData::Unary {
+                operator,
+                operand,
+            } => {
+                if *operator == UnaryOperator::Negate
+                    && matches!(
+              &operand.data,
+              ExpressionData::IntegerLiteral
+          )
+                {
+                    return self.analyze_integer_literal(
+                        operand,
+                        expression.span,
+                        expected,
+                        true,
+                    );
+                }
+
+                let operand =
+                    self.analyze_expression(operand, expected);
+
+                if operand.type_ == Type::Error {
+                    return HirExpression::error(
+                        expression.span,
+                    );
+                }
+
+                let Some(integer_type) =
+                    operand.type_.as_integer()
+                else {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "Unary negation requires an integer",
+                            expression.span,
+                            format!(
+                                "found operand of type `{:?}`",
+                                operand.type_,
+                            ),
+                        ),
+                    );
+
+                    return HirExpression::error(
+                        expression.span,
+                    );
+                };
+
+                if !integer_type.is_signed() {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "Cannot negate an unsigned integer",
+                            expression.span,
+                            format!(
+                                "`{}` is unsigned",
+                                integer_type.name(),
+                            ),
+                        ),
+                    );
+
+                    return HirExpression::error(
+                        expression.span,
+                    );
+                }
+
+                HirExpression {
+                    type_: operand.type_.clone(),
+                    span: expression.span,
+
+                    data: HirExpressionData::Unary {
+                        operator: *operator,
+                        operand: Box::new(operand),
+                    },
+                }
+            }
+
             ExpressionData::Call { callee, arguments } => {
                 let callee = self.analyze_expression(callee, None);
                 if callee.type_ == Type::Error {
@@ -412,90 +483,12 @@ impl Elaborator<'_> {
                 }
             }
             ExpressionData::IntegerLiteral => {
-                let Some(literal) = self.parse_integer_literal(expression.span) else {
-                    return HirExpression::error(expression.span);
-                };
-
-                let expected_integer = expected.and_then(Type::as_integer);
-
-                let integer_type = match literal.suffix {
-                    Some(suffix) => {
-                        if let Some(expected_integer) = expected_integer
-                            && expected_integer != suffix
-                        {
-                            self.diagnostics.push(Diagnostic::error(
-                                "Integer type mismatch",
-                                expression.span,
-                                format!(
-                                    "expected `{}`, but this literal has type `{}`",
-                                    expected_integer.name(),
-                                    suffix.name()
-                                )
-                            ));
-
-                            return HirExpression::error(expression.span);
-                        }
-
-                        suffix
-                    }
-
-                    None => {
-                        if let Some(expected) = expected {
-                            match expected.as_integer() {
-                                Some(integer) => integer,
-
-                                None => {
-                                    self.diagnostics.push(Diagnostic::error(
-                                        "Type mismatch",
-                                        expression.span,
-                                        format!(
-                                            "expected `{expected:?}`, but found an integer literal"
-                                        )
-                                    ));
-
-                                    return HirExpression::error(expression.span);
-                                }
-                            }
-                        } else {
-                            IntegerType::I64
-                        }
-                    }
-                };
-
-                if let Some(expected) = expected
-                    && !expected.is_integer()
-                {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Type mismatch",
-                        expression.span,
-                        format!(
-                            "expected `{expected:?}`, but found `{}`",
-                            integer_type.name()
-                        )
-                    ));
-
-                    return HirExpression::error(expression.span);
-                }
-
-                if literal.magnitude > integer_type.maximum_literal(&self.target) {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Integer literal out of range",
-                        expression.span,
-                        format!(
-                            "`{}` does not fit in `{}`",
-                            literal.magnitude,
-                            integer_type.name()
-                        )
-                    ));
-
-                    return HirExpression::error(expression.span);
-                }
-
-                HirExpression {
-                    type_: Type::Integer(integer_type),
-                    span: expression.span,
-                    data: HirExpressionData::Integer(literal.magnitude),
-                }
+                self.analyze_integer_literal(
+                    expression,
+                    expression.span,
+                    expected,
+                    false
+                )
             }
 
             ExpressionData::Name => {
@@ -1016,6 +1009,145 @@ impl Elaborator<'_> {
             magnitude,
             suffix
         })
+    }
+
+    fn analyze_integer_literal(
+        &mut self,
+        expression: &Expression,
+        result_span: Span,
+        expected: Option<&Type>,
+        negate: bool,
+    ) -> HirExpression {
+        let Some(literal) =
+            self.parse_integer_literal(expression.span)
+        else {
+            return HirExpression::error(result_span);
+        };
+
+        let expected_integer =
+            expected.and_then(Type::as_integer);
+
+        let integer_type = match literal.suffix {
+            Some(suffix) => {
+                if let Some(expected_integer) =
+                    expected_integer
+                    && expected_integer != suffix
+                {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "Integer type mismatch",
+                            result_span,
+                            format!(
+                                "expected `{}`, but this \
+                               literal has type `{}`",
+                                expected_integer.name(),
+                                suffix.name(),
+                            ),
+                        ),
+                    );
+
+                    return HirExpression::error(
+                        result_span,
+                    );
+                }
+
+                suffix
+            }
+
+            None => {
+                if let Some(expected) = expected {
+                    match expected.as_integer() {
+                        Some(integer) => integer,
+
+                        None => {
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    "Type mismatch",
+                                    result_span,
+                                    format!(
+                                        "expected \
+                                       `{expected:?}`, but \
+                                       found an integer \
+                                       literal"
+                                    ),
+                                ),
+                            );
+
+                            return HirExpression::error(
+                                result_span,
+                            );
+                        }
+                    }
+                } else {
+                    IntegerType::I64
+                }
+            }
+        };
+
+        if let Some(expected) = expected
+            && !expected.is_integer()
+        {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "Type mismatch",
+                    result_span,
+                    format!(
+                        "expected `{expected:?}`, but \
+                       found `{}`",
+                        integer_type.name(),
+                    ),
+                ),
+            );
+
+            return HirExpression::error(result_span);
+        }
+
+        if negate && !integer_type.is_signed() {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "Cannot negate an unsigned integer",
+                    result_span,
+                    format!(
+                        "`{}` is unsigned",
+                        integer_type.name(),
+                    ),
+                ),
+            );
+
+            return HirExpression::error(result_span);
+        }
+
+        let magnitude = literal.magnitude as i128;
+
+        let value = if negate {
+            -magnitude
+        } else {
+            magnitude
+        };
+
+        if !integer_type.contains(
+            value,
+            &self.target,
+        ) {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "Integer literal out of range",
+                    result_span,
+                    format!(
+                        "`{value}` does not fit in `{}`",
+                        integer_type.name(),
+                    ),
+                ),
+            );
+
+            return HirExpression::error(result_span);
+        }
+
+        HirExpression {
+            type_: Type::Integer(integer_type),
+            span: result_span,
+            data: HirExpressionData::Integer(value),
+        }
     }
 }
 

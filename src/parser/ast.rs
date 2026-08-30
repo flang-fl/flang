@@ -43,6 +43,10 @@ pub enum ExpressionData {
     IntegerLiteral,
     Boolean(bool),
     Name,
+    Unary {
+        operator: UnaryOperator,
+        operand: Box<Expression>,
+    },
     Binary {
         lhs: Box<Expression>,
         operator: BinaryOperator,
@@ -60,6 +64,11 @@ pub enum ExpressionData {
         base: Box<Expression>,
         index: Box<Expression>
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOperator {
+    Negate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
