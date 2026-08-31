@@ -965,6 +965,31 @@ Codex should continue exploring these rather than assuming answers:
 - Final function declaration syntax.
 - Whether anonymous functions use `fn(...) {}` exactly as shown.
 - Named argument syntax, especially for explicit compile-time parameters.
+- Function parameter syntax may eventually distinguish an external argument
+  label, used by callers, from the internal binding name used by the function
+  body. One exploratory spelling is:
+
+  ```text
+  fn(external internal: i32) -> i32
+  ```
+
+  Under this model, external labels would participate in function-type
+  compatibility while internal names would not:
+
+  ```text
+  fn(external balls: i32) -> i32
+      == fn(external value: i32) -> i32
+
+  fn(ext value: i32) -> i32
+      != fn(ext2 value: i32) -> i32
+  ```
+
+  A deliberately ignored external label may use `_`, with an exploratory form
+  such as `fn(_ value: i32) -> i32`. This would state that the parameter is not
+  part of the named-argument interface and that compatibility should not depend
+  on a call label at that position. The exact syntax, whether unlabeled
+  parameters are positional-only, and the compatibility relationship between
+  labeled and explicitly unlabeled function types remain open.
 - Whether compile-time control flow needs explicit syntax (`comp if`, `comp for`) or is inferred from phase.
 - Exact syntax for type/value reflection and field access by reflected field objects.
 - The full scope of `is` patterns, including whether comparison-like forms such as `x is > 5` should exist.
