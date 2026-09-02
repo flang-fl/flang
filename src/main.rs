@@ -529,7 +529,7 @@ mod tests {
     fn comptime_array_length() {
         assert_return_value(
             r#"
-            comp N = 4 * 2;
+            comp N = 4usize * 2;
 
             comp main = fn() -> i64 {
                 let values: [N]i64 = [0; N];

@@ -21,6 +21,7 @@ pub enum TokenKind {
     Return,
 
     // Symbols
+    At,                 // @
     Eq,                 // =
     EqEq,               // ==
     Semi,               // ;
@@ -51,4 +52,5 @@ pub enum TokenKind {
     // Special
     Identifier,
     NumberLiteral,
+    StringLiteral,
 }

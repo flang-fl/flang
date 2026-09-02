@@ -1,0 +1,18 @@
+comp c_get_char = @extern<"C", "getchar", fn() -> i32>;
+comp c_put_char = @extern<"C", "putchar", fn(char: i32) -> i32>;
+comp c_to_upper = @extern<"C", "toupper", fn(char: i32) -> i32>;
+
+comp main = fn() -> i64 {
+    let char = c_get_char();
+    if char < 0 {
+        return 1;
+    }
+
+    let upper = c_to_upper(char);
+    let result = c_put_char(upper);
+    if result < 0 {
+        return 1;
+    }
+
+    return 0;
+};
