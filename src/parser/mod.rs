@@ -160,16 +160,13 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 }
 
                 TokenKind::GreaterThan if nested_parens == 0 => {
-                    return self.tokens
+                    return self
+                        .tokens
                         .get(index + 1)
-                        .is_some_and(|next| {
-                            next.kind == TokenKind::LParen
-                        })
+                        .is_some_and(|next| next.kind == TokenKind::LParen);
                 }
 
-                TokenKind::Semi
-                | TokenKind::LCurly
-                | TokenKind::RCurly => return false,
+                TokenKind::Semi | TokenKind::LCurly | TokenKind::RCurly => return false,
 
                 _ => {}
             }
@@ -181,10 +178,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     /// Temporary fix for something like make_adder<a > b> thinking it's actually make_adder<a> b >
-    fn parse_specialization_expression(
-        &mut self,
-        callee: Expression
-    ) -> Option<Expression> {
+    fn parse_specialization_expression(&mut self, callee: Expression) -> Option<Expression> {
         self.expect(TokenKind::LessThan, "Expected `<`")?;
 
         let mut arguments = Vec::new();
@@ -201,7 +195,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         let greater = self.expect(
             TokenKind::GreaterThan,
-            "Expected `>` after compile-time arguments"
+            "Expected `>` after compile-time arguments",
         )?;
 
         Some(Expression {
@@ -288,6 +282,14 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_primary(&mut self) -> Option<Expression> {
+        if self.peek_is(TokenKind::StringLiteral) {
+            let string_literal =
+                self.expect(TokenKind::StringLiteral, "Expected string literal")?;
+            return Some(Expression {
+                span: string_literal.span,
+                data: ExpressionData::StringLiteral,
+            });
+        }
         // [0; 50]
         if self.peek_is(TokenKind::LBrack) {
             let l_brack = self.expect(TokenKind::LBrack, "Expected `[`")?;
@@ -661,5 +663,61 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         self.index += 1;
         Some(token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::SourceId;
+    use crate::tokenizer::Tokenizer;
+    use ariadne::Source;
+
+    fn parse_source(text: &str) -> (SourceFile, Program) {
+        let source = SourceFile {
+            id: SourceId(0),
+            name: "test.fl".to_owned(),
+            source: Source::from(text.to_owned()),
+        };
+
+        let tokens = Tokenizer::new(&source)
+            .tokenize()
+            .expect("tokenization should succeed");
+
+        let program = Parser::new(&source, &tokens)
+            .parse()
+            .expect("parsing should succeed");
+
+        (source, program)
+    }
+
+    fn assert_string_binding(input: &str, expected_literal: &str) {
+        let (source, program) = parse_source(input);
+
+        assert_eq!(program.items.len(), 1);
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        assert!(matches!(
+            binding.expression.data,
+            ExpressionData::StringLiteral
+        ));
+
+        assert_eq!(source.span_text(binding.expression.span), expected_literal);
+    }
+
+    #[test]
+    fn parses_string_literal_expression() {
+        assert_string_binding("comp name = \"getchar\";", "\"getchar\"");
+    }
+
+    #[test]
+    fn parses_empty_string_literal_expression() {
+        assert_string_binding("comp name = \"\";", "\"\"");
+    }
+
+    #[test]
+    fn parses_utf8_string_literal_expression() {
+        assert_string_binding("comp name = \"héllo 世界\";", "\"héllo 世界\"");
     }
 }
