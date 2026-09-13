@@ -24,6 +24,33 @@ impl Elaborator<'_> {
         expected: Option<&Type>,
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::TypeValue(type_expression) => {
+                let value = self.resolve_type_expression(type_expression);
+
+                if value == Type::Error {
+                    return HirExpression::error(expression.span);
+                }
+
+                if let Some(expected) = expected
+                    && *expected != Type::Type
+                    && *expected != Type::Error
+                {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Type mismatch",
+                        expression.span,
+                        format!("expected `{:?}` but got `type`", expected),
+                    ));
+
+                    return HirExpression::error(expression.span);
+                }
+
+                HirExpression {
+                    span: expression.span,
+                    type_: Type::Type,
+                    data: HirExpressionData::TypeValue(value),
+                }
+            }
+
             ExpressionData::StringLiteral => {
                 let start = expression.span.start + 1; // cut off left "
                 let end = expression.span.end - 1; // cut off right "
@@ -32,15 +59,13 @@ impl Elaborator<'_> {
                     .span_text(self.source.span(start, end))
                     .to_string();
 
-                if let Some(type_) = expected && *type_ != Type::Str {
+                if let Some(type_) = expected
+                    && *type_ != Type::Str
+                {
                     self.diagnostics.push(Diagnostic::error(
                         "Type mismatch",
                         expression.span,
-                        format!(
-                            "expected `{:?}` but got `{:?}`",
-                            type_,
-                            Type::Str
-                        ),
+                        format!("expected `{:?}` but got `{:?}`", type_, Type::Str),
                     ));
 
                     return HirExpression::error(expression.span);
@@ -476,7 +501,7 @@ impl Elaborator<'_> {
                 if !self.validate_runtime_type(
                     &return_type,
                     function.return_type.span,
-                    "functions cannot return unsized types at runtime"
+                    "functions cannot return unsized types at runtime",
                 ) {
                     return_type = Type::Error;
                 }
@@ -490,7 +515,7 @@ impl Elaborator<'_> {
                         if !self.validate_runtime_type(
                             &type_,
                             parameter.type_annotation.span,
-                            "runtime parameters cannot store unsized values"
+                            "runtime parameters cannot store unsized values",
                         ) {
                             type_ = Type::Error;
                         }
@@ -818,7 +843,20 @@ impl Elaborator<'_> {
                     size,
                 }
             }
+
             TypeExpressionData::Unit => Type::Unit,
+
+            TypeExpressionData::Function {
+                parameters,
+                return_type,
+            } => Type::Function {
+                parameters: parameters
+                    .iter()
+                    .map(|type_| self.resolve_type_expression(type_))
+                    .collect(),
+                return_type: Box::new(self.resolve_type_expression(return_type)),
+            },
+
             TypeExpressionData::Identifier => {
                 let name = self.source.span_text(expression.span);
 
@@ -1322,7 +1360,7 @@ impl Elaborator<'_> {
         if !self.validate_runtime_type(
             &return_type,
             function.return_type.span,
-            "functions cannot return unsized types at runtime"
+            "functions cannot return unsized types at runtime",
         ) {
             return_type = Type::Error;
         }
@@ -1335,7 +1373,7 @@ impl Elaborator<'_> {
             if !self.validate_runtime_type(
                 &type_,
                 parameter.type_annotation.span,
-                "runtime parameters cannot store unsized values"
+                "runtime parameters cannot store unsized values",
             ) {
                 type_ = Type::Error;
             }
@@ -1376,9 +1414,7 @@ impl Elaborator<'_> {
         let mut referenced_symbols = HashSet::new();
         collect_block_symbols(&body, &mut referenced_symbols);
 
-        captures.retain(|symbol, _| {
-            referenced_symbols.contains(symbol)
-        });
+        captures.retain(|symbol, _| referenced_symbols.contains(symbol));
 
         self.frames.pop();
         self.environment.pop_scope();
@@ -1403,6 +1439,10 @@ impl Elaborator<'_> {
 
     fn comptime_key(&mut self, value: &ComptimeValue, span: Span) -> Option<ComptimeKey> {
         match value {
+            ComptimeValue::Type(type_) => {
+                Some(ComptimeKey::Type(type_.clone()))
+            }
+
             ComptimeValue::String(string) => Some(ComptimeKey::Str(string.clone())),
 
             ComptimeValue::Integer { value, type_ } => Some(ComptimeKey::Integer {
@@ -1424,17 +1464,21 @@ impl Elaborator<'_> {
         }
     }
 
-    fn validate_runtime_type(
-        &mut self,
-        type_: &Type,
-        span: Span,
-        description: &str
-    ) -> bool {
+    fn validate_runtime_type(&mut self, type_: &Type, span: Span, description: &str) -> bool {
+        if *type_ == Type::Type {
+            self.diagnostics.push(Diagnostic::error(
+                "`type` has no runtime representation",
+                span,
+                description
+            ));
+
+            return false;
+        }
         if *type_ == Type::Str {
             self.diagnostics.push(Diagnostic::error(
                 "`str` has no runtime representation",
                 span,
-                description
+                description,
             ));
 
             false
@@ -1450,27 +1494,19 @@ struct ParsedIntegerLiteral {
     suffix: Option<IntegerType>,
 }
 
-fn collect_block_symbols(
-    block: &HirBlock,
-    symbols: &mut HashSet<SymbolId>
-) {
+fn collect_block_symbols(block: &HirBlock, symbols: &mut HashSet<SymbolId>) {
     for statement in &block.statements {
         collect_statement_symbols(statement, symbols);
     }
 }
 
-fn collect_statement_symbols(
-    statement: &HirStatement,
-    symbols: &mut HashSet<SymbolId>
-) {
+fn collect_statement_symbols(statement: &HirStatement, symbols: &mut HashSet<SymbolId>) {
     match &statement.data {
-        HirStatementData::Return(Some(expression))
-        | HirStatementData::Expression(expression) => {
+        HirStatementData::Return(Some(expression)) | HirStatementData::Expression(expression) => {
             collect_expression_symbols(expression, symbols);
         }
 
-        HirStatementData::Return(None)
-        | HirStatementData::Error => {}
+        HirStatementData::Return(None) | HirStatementData::Error => {}
 
         HirStatementData::Binding { expression, .. } => {
             collect_expression_symbols(expression, symbols);
@@ -1484,7 +1520,7 @@ fn collect_statement_symbols(
         HirStatementData::If {
             condition,
             then_block,
-            else_branch
+            else_branch,
         } => {
             collect_expression_symbols(condition, symbols);
             collect_block_symbols(then_block, symbols);
@@ -1504,7 +1540,7 @@ fn collect_statement_symbols(
 
         HirStatementData::While {
             condition,
-            while_block
+            while_block,
         } => {
             collect_expression_symbols(condition, symbols);
             collect_block_symbols(while_block, symbols);
@@ -1512,30 +1548,20 @@ fn collect_statement_symbols(
     }
 }
 
-fn collect_place_symbols(
-    place: &HirPlace,
-    symbols: &mut HashSet<SymbolId>
-) {
+fn collect_place_symbols(place: &HirPlace, symbols: &mut HashSet<SymbolId>) {
     match &place.data {
         HirPlaceData::Symbol(symbol) => {
             symbols.insert(*symbol);
         }
 
-        HirPlaceData::Index {
-            array,
-            index,
-            ..
-        } => {
+        HirPlaceData::Index { array, index, .. } => {
             symbols.insert(*array);
             collect_expression_symbols(index, symbols);
         }
     }
 }
 
-fn collect_expression_symbols(
-    expression: &HirExpression,
-    symbols: &mut HashSet<SymbolId>
-) {
+fn collect_expression_symbols(expression: &HirExpression, symbols: &mut HashSet<SymbolId>) {
     use HirExpressionData::*;
     match &expression.data {
         Symbol(symbol) => {
@@ -1551,10 +1577,7 @@ fn collect_expression_symbols(
             collect_expression_symbols(rhs, symbols);
         }
 
-        Call {
-            callee,
-            arguments
-        } => {
+        Call { callee, arguments } => {
             collect_expression_symbols(callee, symbols);
             for argument in arguments {
                 collect_expression_symbols(argument, symbols);
@@ -1574,11 +1597,7 @@ fn collect_expression_symbols(
             collect_block_symbols(&function.body, symbols);
         }
 
-        FunctionTemplate(_)
-        | KnownFunction(_)
-        | Integer(_)
-        | Bool(_)
-        | StringLiteral(_)
-        | Error => {}
+        TypeValue(_) | FunctionTemplate(_) | KnownFunction(_) | Integer(_) | Bool(_)
+        | StringLiteral(_) | Error => {}
     }
 }

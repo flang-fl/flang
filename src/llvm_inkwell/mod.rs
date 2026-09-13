@@ -866,6 +866,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             HirExpressionData::Function(_) | HirExpressionData::Error | HirExpressionData::KnownFunction(_) => {
                 Err("expression is not supported by Inkwell backend yet".to_owned())
             }
+
+            HirExpressionData::TypeValue(_) => {
+                Err("type values have no runtime representation".to_owned())
+            }
         }
     }
 

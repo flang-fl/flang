@@ -40,6 +40,7 @@ pub struct Expression {
 #[derive(Debug, Clone)]
 pub enum ExpressionData {
     Function(FunctionExpression),
+    TypeValue(TypeExpression),
     IntegerLiteral,
     StringLiteral,
     Boolean(bool),
@@ -129,6 +130,10 @@ pub enum TypeExpressionData {
     FixedArray {
         size: Box<Expression>,
         base_type: Box<TypeExpression>,
+    },
+    Function {
+        return_type: Box<TypeExpression>,
+        parameters: Vec<TypeExpression>,
     },
     Unit
 }

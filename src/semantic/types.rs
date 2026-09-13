@@ -1,7 +1,7 @@
 use crate::comptime::FunctionTemplateId;
 use crate::TargetInfo;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Integer(IntegerType),
     Bool,
@@ -41,6 +41,7 @@ pub enum ComptimeKey {
         type_: IntegerType
     },
     Str(String),
+    Type(Type),
     Bool(bool)
 }
 
