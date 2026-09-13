@@ -172,13 +172,13 @@ impl Elaborator<'_> {
                             Some(base_type.as_ref())
                         }
 
-                        other => {
+                        _ => {
                             self.diagnostics.push(Diagnostic::error(
                                 "Type mismatch",
                                 expression.span,
                                 format!(
-                                    "expected expression of type `{:?}` but got `{:?}`",
-                                    expected, other
+                                    "expected expression of type `{:?}` but got Array",
+                                    expected
                                 ),
                             ));
                             return HirExpression::error(expression.span);
