@@ -141,11 +141,12 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let mut expression = self.parse_primary()?;
 
         loop {
+            let intrinsic = matches!(expression.data, ExpressionData::Intrinsic { .. });
             if self.peek_is(TokenKind::LParen) {
                 expression = self.parse_call_expression(expression)?;
             } else if self.peek_is(TokenKind::LBrack) {
                 expression = self.parse_index_expression(expression)?;
-            } else if self.looks_like_specialization() {
+            } else if self.peek_is(TokenKind::LessThan) && (intrinsic || self.looks_like_specialization()) {
                 expression = self.parse_specialization_expression(expression)?;
             } else {
                 break;
@@ -294,6 +295,18 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_primary(&mut self) -> Option<Expression> {
+        if self.peek_is(TokenKind::At) {
+            let at = self.expect(TokenKind::At, "Expected `@`")?;
+            let name = self.expect(TokenKind::Identifier, "Expected identifier after `@`")?;
+
+            return Some(Expression {
+                span: self.source.fromto(at.span, name.span),
+                data: ExpressionData::Intrinsic {
+                    name: name.span
+                }
+            });
+        }
+
         if self.peek_is(TokenKind::StringLiteral) {
             let string_literal =
                 self.expect(TokenKind::StringLiteral, "Expected string literal")?;
@@ -1103,5 +1116,159 @@ mod tests {
             ),
             "fn(i64) -> i64"
         );
+    }
+
+    #[test]
+    fn parses_bare_intrinsic() {
+        let (source, program) = parse_source("comp x = @trap;");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Intrinsic { name } =
+            &binding.expression.data
+        else {
+            panic!("expected an intrinsic");
+        };
+
+        assert_eq!(source.span_text(*name), "trap");
+        assert_eq!(source.span_text(binding.expression.span), "@trap");
+    }
+
+    #[test]
+    fn parses_intrinsic_runtime_call() {
+        let (source, program) = parse_source("comp x = @trap();");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Call {
+            callee,
+            arguments,
+        } = &binding.expression.data
+        else {
+            panic!("expected a call");
+        };
+
+        assert!(arguments.is_empty());
+
+        let ExpressionData::Intrinsic { name } = &callee.data else {
+            panic!("expected the call target to be an intrinsic");
+        };
+
+        assert_eq!(source.span_text(*name), "trap");
+        assert_eq!(source.span_text(binding.expression.span), "@trap()");
+    }
+
+    #[test]
+    fn parses_specialized_extern_intrinsic() {
+        let (source, program) = parse_source(
+            r#"comp x = @extern<"C", "getchar", fn() -> i32>;"#,
+        );
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Specialize {
+            callee,
+            arguments,
+        } = &binding.expression.data
+        else {
+            panic!("expected intrinsic specialization");
+        };
+
+        let ExpressionData::Intrinsic { name } = &callee.data else {
+            panic!("expected an intrinsic specialization target");
+        };
+
+        assert_eq!(source.span_text(*name), "extern");
+        assert_eq!(arguments.len(), 3);
+
+        assert!(matches!(
+          arguments[0].data,
+          ExpressionData::StringLiteral
+      ));
+        assert!(matches!(
+          arguments[1].data,
+          ExpressionData::StringLiteral
+      ));
+        assert!(matches!(
+          arguments[2].data,
+          ExpressionData::TypeValue(_)
+      ));
+
+        assert_eq!(source.span_text(arguments[0].span), "\"C\"");
+        assert_eq!(source.span_text(arguments[1].span), "\"getchar\"");
+        assert_eq!(
+            source.span_text(arguments[2].span),
+            "fn() -> i32"
+        );
+    }
+
+    #[test]
+    fn parses_runtime_call_after_intrinsic_specialization() {
+        let (source, program) =
+            parse_source(r#"comp x = @foo<"compile-time">(123);"#);
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Call {
+            callee,
+            arguments: runtime_arguments,
+        } = &binding.expression.data
+        else {
+            panic!("expected a runtime call");
+        };
+
+        assert_eq!(runtime_arguments.len(), 1);
+        assert_eq!(
+            source.span_text(runtime_arguments[0].span),
+            "123"
+        );
+
+        let ExpressionData::Specialize {
+            callee,
+            arguments: comptime_arguments,
+        } = &callee.data
+        else {
+            panic!("expected the call target to be specialized");
+        };
+
+        assert_eq!(comptime_arguments.len(), 1);
+        assert_eq!(
+            source.span_text(comptime_arguments[0].span),
+            "\"compile-time\""
+        );
+
+        let ExpressionData::Intrinsic { name } = &callee.data else {
+            panic!("expected an intrinsic specialization target");
+        };
+
+        assert_eq!(source.span_text(*name), "foo");
+        assert_eq!(
+            source.span_text(binding.expression.span),
+            r#"@foo<"compile-time">(123)"#
+        );
+    }
+
+    #[test]
+    fn rejects_intrinsic_without_name() {
+        let diagnostics = parse_error("comp x = @;");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .primary
+                .text
+                .contains("Expected identifier after `@`")
+        }));
+    }
+
+    #[test]
+    fn rejects_intrinsic_specialization_without_name() {
+        let diagnostics = parse_error(r#"comp x = @<"C">;"#);
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .primary
+                .text
+                .contains("Expected identifier after `@`")
+        }));
     }
 }

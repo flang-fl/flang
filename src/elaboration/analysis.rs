@@ -24,6 +24,16 @@ impl Elaborator<'_> {
         expected: Option<&Type>,
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::Intrinsic { name } => {
+                self.diagnostics.push(Diagnostic::error(
+                    "Intrinsics are currently unsupported",
+                    expression.span,
+                    ":("
+                ));
+
+                HirExpression::error(expression.span)
+            }
+
             ExpressionData::TypeValue(type_expression) => {
                 let value = self.resolve_type_expression(type_expression);
 
@@ -372,11 +382,13 @@ impl Elaborator<'_> {
                 let callee = self.analyze_expression(callee, None);
 
                 let Type::FunctionTemplate(template_id) = callee.type_ else {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Expression cannot be specialized",
-                        callee.span,
-                        format!("expected a function template found `{:?}`", callee.type_),
-                    ));
+                    if callee.type_ != Type::Error {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Expression cannot be specialized",
+                            callee.span,
+                            format!("expected a function template found `{:?}`", callee.type_),
+                        ));
+                    }
 
                     return HirExpression::error(expression.span);
                 };
