@@ -5,6 +5,7 @@ use crate::TargetInfo;
 pub enum Type {
     Integer(IntegerType),
     Bool,
+    Str,
     Unit,
     FixedArray {
         size: usize,
@@ -39,6 +40,7 @@ pub enum ComptimeKey {
         value: i128,
         type_: IntegerType
     },
+    Str(String),
     Bool(bool)
 }
 

@@ -642,6 +642,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         operands: &Operands<'ctx>,
     ) -> Result<IntValue<'ctx>, String> {
         match &expression.data {
+            HirExpressionData::StringLiteral(_) => {
+                Err("`str` has no runtime representation".to_owned())
+            }
+
             HirExpressionData::Index { base, index } => {
                 let HirExpressionData::Symbol(symbol) = &base.data else {
                     return Err("only local arrays can currently be indexed".to_owned());

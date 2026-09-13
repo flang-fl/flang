@@ -539,4 +539,125 @@ mod tests {
             0
         )
     }
+
+    #[test]
+    fn accepts_inferred_comptime_string() {
+        assert_return_value(
+            r#"
+          comp symbol = "putchar";
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            0,
+        );
+    }
+
+    #[test]
+    fn accepts_unicode_comptime_string() {
+        assert_return_value(
+            r#"
+          comp message = "héllo 世界";
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            0,
+        );
+    }
+
+    #[test]
+    fn accepts_string_comptime_parameter() {
+        assert_return_value(
+            r#"
+          comp select = fn<symbol: str>() -> i64 {
+              return 42;
+          };
+
+          comp main = fn() -> i64 {
+              return select<"putchar">();
+          };
+          "#,
+            42,
+        );
+    }
+
+    #[test]
+    fn rejects_string_where_integer_is_expected() {
+        assert_compile_error(
+            r#"
+          comp invalid = fn() -> i64 {
+              return "putchar";
+          };
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            "Type mismatch",
+        );
+    }
+
+    #[test]
+    fn rejects_string_in_runtime_local() {
+        assert_compile_error(
+            r#"
+          comp main = fn() -> i64 {
+              let symbol = "putchar";
+              return 0;
+          };
+          "#,
+            "`str` has no runtime representation",
+        );
+    }
+
+    #[test]
+    fn rejects_string_runtime_parameter() {
+        assert_compile_error(
+            r#"
+          comp invalid = fn(symbol: str) -> i64 {
+              return 0;
+          };
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            "`str` has no runtime representation",
+        );
+    }
+
+    #[test]
+    fn rejects_string_runtime_return_type() {
+        assert_compile_error(
+            r#"
+          comp invalid = fn() -> str {
+              return "putchar";
+          };
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            "`str` has no runtime representation",
+        );
+    }
+
+    #[test]
+    fn rejects_string_runtime_parameter_after_specialization() {
+        assert_compile_error(
+            r#"
+          comp invalid = fn<tag: i64>(symbol: str) -> i64 {
+              return tag;
+          };
+
+          comp main = fn() -> i64 {
+              return invalid<1>("putchar");
+          };
+          "#,
+            "`str` has no runtime representation",
+        );
+    }
 }

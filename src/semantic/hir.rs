@@ -72,6 +72,7 @@ pub enum HirExpressionData {
     Integer(i128),
     Symbol(SymbolId),
     Bool(bool),
+    StringLiteral(String),
     Unary {
         operator: UnaryOperator,
         operand: Box<HirExpression>
