@@ -988,26 +988,36 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                     return Ok(*function);
                 }
 
-                let Some(ComptimeValue::Function(
-                             function_id,
-                         )) = self.program.values.get(*symbol_id)
-                else {
-                    return Err(
-                        "callee does not have a \
-                       compile-time function value"
-                            .to_owned(),
-                    );
-                };
+                match self.program.values.get(*symbol_id) {
+                    Some(ComptimeValue::Function(function_id)) => {
+                        self.functions
+                            .get(function_id)
+                            .copied()
+                            .ok_or_else(|| {
+                                format!(
+                                    "function {:?} was not declared",
+                                    function_id
+                                )
+                            })
+                    }
 
-                self.functions
-                    .get(function_id)
-                    .copied()
-                    .ok_or_else(|| {
-                        format!(
-                            "function {:?} was not declared",
-                            function_id,
-                        )
-                    })
+                    Some(ComptimeValue::ExternFunction(external_symbol)) => {
+                        self.external_functions
+                            .get(external_symbol)
+                            .copied()
+                            .ok_or_else(|| {
+                                format!(
+                                    "external function symbol {:?} was not declared",
+                                    external_symbol
+                                )
+                            })
+                    }
+
+                    _ => Err(
+                        "callee does not have a compile-time function value"
+                            .to_owned(),
+                    ),
+                }
             }
 
             other => Err(format!(

@@ -379,6 +379,27 @@ impl Elaborator<'_> {
             }
 
             ExpressionData::Specialize { callee, arguments } => {
+                if let ExpressionData::Intrinsic { name } = &callee.data {
+                    return match self.source.span_text(*name) {
+                        "extern" => {
+                            self.analyze_extern_intrinsic(arguments, expression.span)
+                        },
+
+                        other => {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Unknown intrinsic",
+                                callee.span,
+                                format!(
+                                    "Unknown intrinsic `{}`",
+                                    other
+                                )
+                            ));
+
+                            HirExpression::error(expression.span)
+                        }
+                    }
+                }
+
                 let callee = self.analyze_expression(callee, None);
 
                 let Type::FunctionTemplate(template_id) = callee.type_ else {
@@ -1497,6 +1518,92 @@ impl Elaborator<'_> {
         } else {
             true
         }
+    }
+
+    fn analyze_extern_intrinsic(
+        &mut self,
+        arguments: &[Expression],
+        span: Span
+    ) -> HirExpression {
+        if arguments.len() != 3 {
+            self.diagnostics.push(Diagnostic::error(
+                "Incorrect number of arguments to `@extern`",
+                span,
+                format!("expected 3, but found {}", arguments.len())
+            ));
+
+            return HirExpression::error(span);
+        }
+
+        let expected_types = [
+            Type::Str,
+            Type::Str,
+            Type::Type,
+        ];
+
+        let mut values = Vec::with_capacity(3);
+
+        for (argument, expected_type) in
+            arguments.iter().zip(&expected_types)
+        {
+            let hir_argument =
+                self.analyze_expression(argument, Some(expected_type));
+
+            if hir_argument.type_ == Type::Error {
+                return HirExpression::error(span);
+            }
+
+            let value = self.evaluate_expression(&hir_argument);
+
+            if value == ComptimeValue::Error {
+                return HirExpression::error(span);
+            }
+
+            values.push(value);
+        }
+
+        let [
+        ComptimeValue::String(abi),
+        ComptimeValue::String(link_name),
+        ComptimeValue::Type(function_type),
+        ] = values.as_slice()
+        else {
+            // The expected types above should make this impossible unless
+            // analysis and compile-time evaluation disagree.
+            unreachable!("validated @extern arguments produced unexpected values");
+        };
+
+        if abi != "C" {
+            self.diagnostics.push(Diagnostic::error(
+                "Unsupported external ABI",
+                arguments[0].span,
+                format!("ABI `{abi}` is not supported; expected `C`"),
+            ));
+
+            return HirExpression::error(span);
+        }
+
+        if !matches!(function_type, Type::Function { .. }) {
+            self.diagnostics.push(Diagnostic::error(
+                "Invalid external function type",
+                arguments[2].span,
+                format!(
+                    "expected a function type, found `{function_type:?}`"
+                ),
+            ));
+
+            return HirExpression::error(span);
+        }
+
+        self.diagnostics.push(Diagnostic::error(
+            "`@extern` lowering is not implemented yet",
+            span,
+            format!(
+                "validated external function `{link_name}` with ABI `{abi}`"
+            ),
+        ));
+
+        HirExpression::error(span)
     }
 }
 
