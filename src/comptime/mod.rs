@@ -29,6 +29,7 @@ pub enum ComptimeValue {
     FunctionTemplate(FunctionTemplateId),
     Type(Type),
     Bool(bool),
+    String(String),
     Unit,
     Error,
 }

@@ -185,6 +185,8 @@ impl Elaborator<'_> {
                 ComptimeValue::Error
             }
 
+            HirExpressionData::StringLiteral(string) => ComptimeValue::String(string.clone()),
+
             HirExpressionData::Bool(bool) => ComptimeValue::Bool(*bool),
 
             HirExpressionData::Function(function) => {

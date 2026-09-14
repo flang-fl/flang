@@ -1,1 +1,11 @@
-"é\"
+comp TEST = "Hi";
+
+comp TEST2 = evil<TEST, 42>();
+
+comp main = fn() -> i64 {
+    return TEST2;
+};
+
+comp evil = fn<e: str, val: i64>() -> i64 {
+    return val;
+};
