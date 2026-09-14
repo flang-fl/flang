@@ -31,7 +31,16 @@ impl SourceFile {
     }
 
     pub fn span_text(&self, span: Span) -> &str {
-        &self.source.text()[span.start..span.end]
+        let text = self.source.text();
+        let start = Self::character_to_byte(text, span.start);
+        let end = Self::character_to_byte(text, span.end);
+        &self.source.text()[start..end]
+    }
+
+    fn character_to_byte(text: &str, character_offset: usize) -> usize {
+        text.char_indices()
+            .nth(character_offset)
+            .map_or(text.len(), |(byte_offset, _)| byte_offset)
     }
 
     pub fn text(&self) -> &str {

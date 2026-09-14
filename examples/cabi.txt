@@ -1,0 +1,30 @@
+
+// @extern<str, str, type>
+// evaluates to a value of the supplied type and is only defined
+// for function types
+// it allows you to treat it like any function value
+// apart from any reflection that asks about the contents of it,
+// you cant iterate over the statements in an externally linked function
+// for example
+// the produced function is exclusively runnable at runtime, this is a restriction that
+// the type system does not properly have a way of expressing at this point in time, I'm not sure
+// how I want this to work but maybe a specific runtime keyword like
+// `runtime fn(...) -> ...` could work to make it explicit
+//
+// identical calls to it share an identity, this is memoized unless I find a good reason against that
+//
+// comptime string literals are of type `str` this is unsized but because comptime is special it does not care
+//
+// calling @extern with the same ABI and external name but different function types is an error
+//
+// MVP restrictions:
+// - C ABI only
+// - no variadic arguments
+// - integer args, integer and unit returns
+//
+// Deferring:
+// - pointers
+// - external globals
+// - library selection
+// - runtime strings
+// Vec«i32»

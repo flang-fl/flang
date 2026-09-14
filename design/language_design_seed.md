@@ -965,6 +965,14 @@ Codex should continue exploring these rather than assuming answers:
 - Final function declaration syntax.
 - Whether anonymous functions use `fn(...) {}` exactly as shown.
 - Named argument syntax, especially for explicit compile-time parameters.
+- Required compile-time argument lists may use doubled angle delimiters, for
+  example `Vec<<i32>>` rather than `Vec<i32>`. This could make the construct
+  visually distinct and remove the usual ambiguity between application and
+  the `<` and `>` comparison operators. The exact spelling remains open.
+  Future discussion should test readability for mixed calls such as
+  `function<<T>>(value)`, nesting such as `Outer<<Inner<<T>>>>`, empty or
+  inferred argument lists, and interactions with possible `<<` and `>>` shift
+  operators and tokenizer rules.
 - Function parameter syntax may eventually distinguish an external argument
   label, used by callers, from the internal binding name used by the function
   body. One exploratory spelling is:

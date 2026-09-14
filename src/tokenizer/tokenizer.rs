@@ -1,7 +1,7 @@
-use std::str::Chars;
 use crate::diagnostics::Diagnostic;
 use crate::source::SourceFile;
 use crate::tokenizer::{Token, TokenKind};
+use std::str::Chars;
 
 pub struct Tokenizer<'src> {
     source: &'src SourceFile,
@@ -47,6 +47,52 @@ impl<'src> Tokenizer<'src> {
 
             if next.is_ascii_whitespace() {
                 self.next();
+                continue;
+            }
+
+            if next == '"' {
+                let start = self.index;
+                self.next();
+                while let Some(next) = self.peek() && next != '"' {
+                    match next {
+                        '\n' | '\\' => {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Unsupported character in string literal",
+                                self.source.span(self.index, self.index + 1),
+                                format!(
+                                    "{} is not supported",
+                                    next
+                                )
+                            ));
+                        }
+
+                        _ => {}
+                    }
+                    self.next();
+                }
+
+                match self.peek() {
+                    None => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Unterminated string literal",
+                            self.source.span(self.index, self.index),
+                            ":("
+                        ));
+                    }
+                    Some(_) => {
+                        if let Err(diagnostic) = self.expect('"') {
+                            self.diagnostics.push(diagnostic);
+                        }
+                    }
+                }
+
+                let end = self.index;
+
+                self.tokens.push(Token {
+                    span: self.source.span(start, end),
+                    kind: TokenKind::StringLiteral
+                });
+
                 continue;
             }
 
@@ -167,6 +213,7 @@ impl<'src> Tokenizer<'src> {
             ';' => TokenKind::Semi,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
+            '@' => TokenKind::At,
 
             '+' => {
                 return self.single_or_double_tokens(
@@ -257,12 +304,121 @@ impl<'src> Tokenizer<'src> {
     }
 
     fn next(&mut self) -> Option<char> {
-        let next = self.chars.next();
+        let next = self.chars.next()?;
+        self.index += 1;
+        Some(next)
+    }
+}
 
-        if next.is_some() {
-            self.index += 1;
+#[cfg(test)]
+mod tests {
+    use ariadne::Source;
+    use crate::source::SourceId;
+    use super::*;
+
+    fn source(text: &str) -> SourceFile {
+        SourceFile {
+            id: SourceId(0),
+            name: "test.fl".to_owned(),
+            source: Source::from(text.to_owned())
         }
+    }
 
-        next
+    fn assert_single_string(input: &str, expected_contents: &str) {
+        let source = source(input);
+        let tokens = Tokenizer::new(&source)
+            .tokenize()
+            .expect("tokenization should succeed");
+
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::StringLiteral);
+        assert_eq!(source.span_text(tokens[0].span), input);
+
+        let complete_literal = source.span_text(tokens[0].span);
+        let contents = &complete_literal[1..complete_literal.len() - 1];
+
+        assert_eq!(contents, expected_contents);
+    }
+
+    fn tokenize_error(input: &str) -> (SourceFile, Vec<Diagnostic>) {
+        let source = source(input);
+        let diagnostics = Tokenizer::new(&source)
+            .tokenize()
+            .expect_err("tokenization should fail");
+
+        (source, diagnostics)
+    }
+
+    #[test]
+    fn tokenizes_ascii_string_literal() {
+        assert_single_string(
+            "\"getchar\"", "getchar"
+        );
+    }
+
+    #[test]
+    fn tokenizes_empty_string_literal() {
+        assert_single_string(
+            "\"\"", ""
+        );
+    }
+
+    #[test]
+    fn tokenizes_utf8_string_literal() {
+        assert_single_string(
+            "\"héllo 世界\"",
+            "héllo 世界"
+        );
+    }
+
+    #[test]
+    fn tokenizes_adjacent_string_literals() {
+        let source = source("\"a\" \"b\"");
+        let tokens = Tokenizer::new(&source)
+            .tokenize()
+            .expect("tokenization should succeed");
+
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::StringLiteral);
+        assert_eq!(tokens[1].kind, TokenKind::StringLiteral);
+        assert_eq!(source.span_text(tokens[0].span), "\"a\"");
+        assert_eq!(source.span_text(tokens[1].span), "\"b\"");
+    }
+
+    #[test]
+    fn rejects_backslash_in_string_literal() {
+        let (source, diagnostics) = tokenize_error("\"é\\\"");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "Unsupported character in string literal"
+        );
+        assert_eq!(
+            source.span_text(diagnostics[0].primary.span),
+            "\\"
+        );
+    }
+
+    #[test]
+    fn rejects_newline_in_string_literal() {
+        let (source, diagnostics) = tokenize_error("\"first\nsecond\"");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            source.span_text(diagnostics[0].primary.span),
+            "\n"
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_string_literal() {
+        let (_source, diagnostics) = tokenize_error("\"unfinished");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "Unterminated string literal"
+        );
     }
 }
