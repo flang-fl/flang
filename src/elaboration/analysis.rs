@@ -24,6 +24,8 @@ impl Elaborator<'_> {
         expected: Option<&Type>,
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::StringLiteral => todo!(),
+
             ExpressionData::Index { base, index } => {
                 let base = self.analyze_expression(base, None);
                 let index =
