@@ -104,6 +104,12 @@ pub enum SymbolKind {
         mutable: bool,
     },
     ExternFunction {
+        abi: ExternAbi,
         link_name: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExternAbi {
+    C,
 }

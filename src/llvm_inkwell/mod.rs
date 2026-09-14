@@ -1,3 +1,4 @@
+use crate::TargetInfo;
 use crate::comptime::{ComptimeFunction, ComptimeValue, FunctionId};
 use crate::elaboration::ElaboratedProgram;
 use crate::parser::ast::{BinaryOperator, UnaryOperator};
@@ -7,15 +8,16 @@ use crate::semantic::hir::{
 };
 use crate::semantic::symbols::{SymbolId, SymbolKind};
 use crate::semantic::types::{IntegerType, Type};
-use inkwell::{IntPredicate, OptimizationLevel};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::targets::{
+    CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine,
+};
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum, BasicType, IntType};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::{IntPredicate, OptimizationLevel};
 use std::collections::HashMap;
-use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine};
-use crate::TargetInfo;
 
 pub fn emit(program: &ElaboratedProgram, target_info: TargetInfo) -> Result<String, String> {
     let context = Context::create();
@@ -59,19 +61,17 @@ pub struct CodeGenerator<'ctx, 'program> {
 }
 
 impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
-    pub fn new(context: &'ctx Context, program: &'program ElaboratedProgram, target_info: TargetInfo) -> Result<Self, String> {
-        Target::initialize_native(
-            &InitializationConfig::default()
-        ).map_err(|error| {
-            format!(
-                "failed to initialize native LLVM target: {error}"
-            )
-        })?;
+    pub fn new(
+        context: &'ctx Context,
+        program: &'program ElaboratedProgram,
+        target_info: TargetInfo,
+    ) -> Result<Self, String> {
+        Target::initialize_native(&InitializationConfig::default())
+            .map_err(|error| format!("failed to initialize native LLVM target: {error}"))?;
 
         let triple = TargetMachine::get_default_triple();
 
-        let llvm_target = Target::from_triple(&triple)
-            .map_err(|err| err.to_string())?;
+        let llvm_target = Target::from_triple(&triple).map_err(|err| err.to_string())?;
 
         let target_machine = llvm_target
             .create_target_machine(
@@ -80,10 +80,9 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 "",
                 OptimizationLevel::None,
                 RelocMode::Default,
-                CodeModel::Default
-            ).ok_or_else(|| {
-            "failed to create LLVM target machine".to_owned()
-        })?;
+                CodeModel::Default,
+            )
+            .ok_or_else(|| "failed to create LLVM target machine".to_owned())?;
 
         let target_data = target_machine.get_target_data();
 
@@ -120,7 +119,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
     fn declare_external_functions(&mut self) -> Result<(), String> {
         for (index, symbol) in self.program.symbols.symbols.iter().enumerate() {
-            let SymbolKind::ExternFunction { link_name } = &symbol.kind else {
+            let SymbolKind::ExternFunction { link_name, abi: _ } = &symbol.kind else {
                 continue;
             };
 
@@ -287,37 +286,18 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
         for (symbol, value) in &function.captures {
             let llvm_value = match value {
-                ComptimeValue::Integer {
-                    value,
-                    type_,
-                } => {
-                    let semantic_type =
-                        Type::Integer(*type_);
+                ComptimeValue::Integer { value, type_ } => {
+                    let semantic_type = Type::Integer(*type_);
 
-                    let llvm_type =
-                        self.llvm_int_type(
-                            &semantic_type,
-                        )?;
+                    let llvm_type = self.llvm_int_type(&semantic_type)?;
 
-                    let bits = integer_bit_pattern(
-                        *value,
-                        *type_,
-                        &self.target,
-                    );
+                    let bits = integer_bit_pattern(*value, *type_, &self.target);
 
-                    llvm_type.const_int(
-                        bits,
-                        type_.is_signed(),
-                    )
+                    llvm_type.const_int(bits, type_.is_signed())
                 }
 
                 ComptimeValue::Bool(value) => {
-                    self.context
-                        .bool_type()
-                        .const_int(
-                            u64::from(*value),
-                            false,
-                        )
+                    self.context.bool_type().const_int(u64::from(*value), false)
                 }
 
                 unsupported => {
@@ -328,10 +308,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 }
             };
 
-            operands.insert(
-                *symbol,
-                LocalOperand::Value(llvm_value)
-            );
+            operands.insert(*symbol, LocalOperand::Value(llvm_value));
         }
 
         for (index, (parameter, llvm_parameter)) in function
@@ -677,22 +654,13 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 let integer_type = expression
                     .type_
                     .as_integer()
-                    .ok_or_else(|| {
-                        "integer expression lost its integer type".to_owned()
-                    })?;
+                    .ok_or_else(|| "integer expression lost its integer type".to_owned())?;
 
                 let llvm_type = self.llvm_int_type(&expression.type_)?;
 
-                let bits = integer_bit_pattern(
-                    *value,
-                    integer_type,
-                    &self.target
-                );
+                let bits = integer_bit_pattern(*value, integer_type, &self.target);
 
-                Ok(llvm_type.const_int(
-                    bits,
-                    integer_type.is_signed()
-                ))
+                Ok(llvm_type.const_int(bits, integer_type.is_signed()))
             }
 
             HirExpressionData::Symbol(symbol_id) => {
@@ -725,11 +693,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                         let semantic_type = Type::Integer(*type_);
                         let llvm_type = self.llvm_int_type(&semantic_type)?;
 
-                        let bits = integer_bit_pattern(
-                            *value,
-                            *type_,
-                            &self.target
-                        );
+                        let bits = integer_bit_pattern(*value, *type_, &self.target);
 
                         Ok(llvm_type.const_int(bits, type_.is_signed()))
                     }
@@ -742,21 +706,14 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                 }
             }
 
-            HirExpressionData::Unary {
-                operator,
-                operand
-            } => {
+            HirExpressionData::Unary { operator, operand } => {
                 let operand = self.emit_expression(operand, operands)?;
 
                 match operator {
-                    UnaryOperator::Negate => {
-                        self.builder
-                            .build_int_neg(
-                                operand,
-                                "negtmp"
-                            )
-                            .map_err(|error| error.to_string())
-                    }
+                    UnaryOperator::Negate => self
+                        .builder
+                        .build_int_neg(operand, "negtmp")
+                        .map_err(|error| error.to_string()),
                 }
             }
 
@@ -775,8 +732,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                             IntPredicate::ULE
                         };
 
-                        self.builder
-                            .build_int_compare(predicate, lhs, rhs, "letmp")
+                        self.builder.build_int_compare(predicate, lhs, rhs, "letmp")
                     }
 
                     BinaryOperator::LessThan => {
@@ -786,8 +742,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                             IntPredicate::ULT
                         };
 
-                        self.builder
-                            .build_int_compare(predicate, lhs, rhs, "lttmp")
+                        self.builder.build_int_compare(predicate, lhs, rhs, "lttmp")
                     }
 
                     BinaryOperator::GreaterThanOrEqual => {
@@ -797,8 +752,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                             IntPredicate::UGE
                         };
 
-                        self.builder
-                            .build_int_compare(predicate, lhs, rhs, "getmp")
+                        self.builder.build_int_compare(predicate, lhs, rhs, "getmp")
                     }
 
                     BinaryOperator::GreaterThan => {
@@ -808,8 +762,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                             IntPredicate::UGT
                         };
 
-                        self.builder
-                            .build_int_compare(predicate, lhs, rhs, "gttmp")
+                        self.builder.build_int_compare(predicate, lhs, rhs, "gttmp")
                     }
 
                     BinaryOperator::NotEqual => {
@@ -822,26 +775,18 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                             .build_int_compare(IntPredicate::EQ, lhs, rhs, "eqltmp")
                     }
 
-                    BinaryOperator::Add => {
-                        self.builder.build_int_add(lhs, rhs, "addtmp")
-                    }
+                    BinaryOperator::Add => self.builder.build_int_add(lhs, rhs, "addtmp"),
 
-                    BinaryOperator::Subtract => {
-                        self.builder.build_int_sub(lhs, rhs, "subtmp")
-                    }
+                    BinaryOperator::Subtract => self.builder.build_int_sub(lhs, rhs, "subtmp"),
 
-                    BinaryOperator::Multiply => {
-                        self.builder.build_int_mul(lhs, rhs, "multmp")
-                    }
+                    BinaryOperator::Multiply => self.builder.build_int_mul(lhs, rhs, "multmp"),
 
                     BinaryOperator::Divide if signed => {
-                        self.builder
-                            .build_int_signed_div(lhs, rhs, "divtmp")
+                        self.builder.build_int_signed_div(lhs, rhs, "divtmp")
                     }
 
                     BinaryOperator::Divide => {
-                        self.builder
-                            .build_int_unsigned_div(lhs, rhs, "divtmp")
+                        self.builder.build_int_unsigned_div(lhs, rhs, "divtmp")
                     }
                 }
                 .map_err(|error| error.to_string())?;
@@ -858,12 +803,12 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             }
 
             HirExpressionData::FunctionTemplate(_) => {
-                Err(
-                    "an unspecialized function template reached LLVM value emission".to_owned()
-                )
+                Err("an unspecialized function template reached LLVM value emission".to_owned())
             }
 
-            HirExpressionData::Function(_) | HirExpressionData::Error | HirExpressionData::KnownFunction(_) => {
+            HirExpressionData::Function(_)
+            | HirExpressionData::Error
+            | HirExpressionData::KnownFunction(_) => {
                 Err("expression is not supported by Inkwell backend yet".to_owned())
             }
 
@@ -893,19 +838,11 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
 
         let index_type = index.get_type();
 
-        let length = index_type.const_int(
-            array_size as u64,
-            false,
-        );
+        let length = index_type.const_int(array_size as u64, false);
 
         let valid = self
             .builder
-            .build_int_compare(
-                IntPredicate::ULT,
-                index,
-                length,
-                "index.in_bounds"
-            )
+            .build_int_compare(IntPredicate::ULT, index, length, "index.in_bounds")
             .map_err(|error| error.to_string())?;
 
         self.builder
@@ -961,62 +898,42 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         Ok(value)
     }
 
-    fn resolve_function(
-        &self,
-        callee: &HirExpression,
-    ) -> Result<FunctionValue<'ctx>, String> {
+    fn resolve_function(&self, callee: &HirExpression) -> Result<FunctionValue<'ctx>, String> {
         match &callee.data {
-            HirExpressionData::KnownFunction(
-                function_id,
-            ) => {
-                self.functions
-                    .get(function_id)
-                    .copied()
-                    .ok_or_else(|| {
-                        format!(
-                            "specialized function {:?} \
+            HirExpressionData::KnownFunction(function_id) => {
+                self.functions.get(function_id).copied().ok_or_else(|| {
+                    format!(
+                        "specialized function {:?} \
                            was not declared",
-                            function_id,
-                        )
-                    })
+                        function_id,
+                    )
+                })
             }
 
             HirExpressionData::Symbol(symbol_id) => {
-                if let Some(function) =
-                    self.external_functions.get(symbol_id)
-                {
+                if let Some(function) = self.external_functions.get(symbol_id) {
                     return Ok(*function);
                 }
 
                 match self.program.values.get(*symbol_id) {
-                    Some(ComptimeValue::Function(function_id)) => {
-                        self.functions
-                            .get(function_id)
-                            .copied()
-                            .ok_or_else(|| {
-                                format!(
-                                    "function {:?} was not declared",
-                                    function_id
-                                )
-                            })
-                    }
+                    Some(ComptimeValue::Function(function_id)) => self
+                        .functions
+                        .get(function_id)
+                        .copied()
+                        .ok_or_else(|| format!("function {:?} was not declared", function_id)),
 
-                    Some(ComptimeValue::ExternFunction(external_symbol)) => {
-                        self.external_functions
-                            .get(external_symbol)
-                            .copied()
-                            .ok_or_else(|| {
-                                format!(
-                                    "external function symbol {:?} was not declared",
-                                    external_symbol
-                                )
-                            })
-                    }
+                    Some(ComptimeValue::ExternFunction(external_symbol)) => self
+                        .external_functions
+                        .get(external_symbol)
+                        .copied()
+                        .ok_or_else(|| {
+                            format!(
+                                "external function symbol {:?} was not declared",
+                                external_symbol
+                            )
+                        }),
 
-                    _ => Err(
-                        "callee does not have a compile-time function value"
-                            .to_owned(),
-                    ),
+                    _ => Err("callee does not have a compile-time function value".to_owned()),
                 }
             }
 
@@ -1065,8 +982,8 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     }
 
     fn llvm_int_type(&self, type_: &Type) -> Result<IntType<'ctx>, String> {
-        use Type::Integer;
         use IntegerType::*;
+        use Type::Integer;
         match type_ {
             Integer(U8 | I8) => Ok(self.context.i8_type()),
             Integer(U16 | I16) => Ok(self.context.i16_type()),
@@ -1074,10 +991,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             Integer(U64 | I64) => Ok(self.context.i64_type()),
 
             Integer(Usize | Isize) => {
-                let llvm_type = self.context.ptr_sized_int_type(
-                    &self.target_data,
-                    None,
-                );
+                let llvm_type = self.context.ptr_sized_int_type(&self.target_data, None);
 
                 if llvm_type.get_bit_width() != self.target.pointer_bit_width {
                     return Err(format!(
@@ -1115,11 +1029,7 @@ fn llvm_function_name(function_id: FunctionId) -> String {
     format!("flang_fn_{}", function_id.index())
 }
 
-fn integer_bit_pattern(
-    value: i128,
-    integer_type: IntegerType,
-    target: &TargetInfo
-) -> u64 {
+fn integer_bit_pattern(value: i128, integer_type: IntegerType, target: &TargetInfo) -> u64 {
     let width = integer_type.bit_width(target);
 
     if width == 64 {
