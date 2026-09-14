@@ -782,26 +782,57 @@ mod tests {
     }
 
     #[test]
-    fn validates_literal_extern_arguments_before_lowering() {
-        assert_compile_error(
+    fn compiles_and_calls_extern_function() {
+        let llvm = compile_text(
             r#"
-          comp f = @extern<"C", "getchar", fn() -> i32>;
+          comp c_put_char =
+              @extern<"C", "putchar", fn(i32) -> i32>;
+
+          comp main = fn() -> i64 {
+              let result = c_put_char(65i32);
+              return 0;
+          };
           "#,
-            "`@extern` lowering is not implemented yet",
+        )
+            .expect("extern function should compile");
+
+        assert!(
+            llvm.contains("declare i32 @putchar(i32)"),
+            "generated LLVM:\n{llvm}",
+        );
+
+        assert!(
+            llvm.contains("call i32 @putchar(i32 65)"),
+            "generated LLVM:\n{llvm}",
         );
     }
 
     #[test]
-    fn validates_computed_extern_arguments_before_lowering() {
-        assert_compile_error(
+    fn compiles_extern_with_computed_arguments() {
+        let llvm = compile_text(
             r#"
           comp ABI = "C";
           comp NAME = "getchar";
           comp Signature = fn() -> i32;
 
-          comp f = @extern<ABI, NAME, Signature>;
+          comp c_get_char = @extern<ABI, NAME, Signature>;
+
+          comp main = fn() -> i64 {
+              let character = c_get_char();
+              return 0;
+          };
           "#,
-            "`@extern` lowering is not implemented yet",
+        )
+            .expect("extern function with computed arguments should compile");
+
+        assert!(
+            llvm.contains("declare i32 @getchar()"),
+            "generated LLVM:\n{llvm}",
+        );
+
+        assert!(
+            llvm.contains("call i32 @getchar()"),
+            "generated LLVM:\n{llvm}",
         );
     }
 

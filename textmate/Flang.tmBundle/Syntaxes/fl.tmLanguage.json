@@ -7,7 +7,13 @@
   ],
   "patterns": [
     {
+      "include": "#strings"
+    },
+    {
       "include": "#declarations"
+    },
+    {
+      "include": "#intrinsics"
     },
     {
       "include": "#function-literals"
@@ -82,13 +88,16 @@
               "name": "storage.type.function.fl"
             }
           },
-          "end": "(?=\\{)",
+          "end": "(?=\\{|[,;>)])",
           "patterns": [
             {
               "include": "#comptime-parameters"
             },
             {
               "include": "#runtime-parameters"
+            },
+            {
+              "include": "#function-literals"
             },
             {
               "include": "#builtins"
@@ -129,6 +138,12 @@
               }
             },
             {
+              "include": "#function-literals"
+            },
+            {
+              "include": "#strings"
+            },
+            {
               "include": "#builtins"
             },
             {
@@ -165,6 +180,12 @@
                   "name": "variable.parameter.fl"
                 }
               }
+            },
+            {
+              "include": "#function-literals"
+            },
+            {
+              "include": "#strings"
             },
             {
               "include": "#builtins"
@@ -215,11 +236,70 @@
       "patterns": [
         {
           "name": "support.type.builtin.fl",
-          "match": "\\b(?:u8|i8|u16|i16|u32|i32|u64|i64|usize|isize|bool|unit)\\b"
+          "match": "\\b(?:u8|i8|u16|i16|u32|i32|u64|i64|usize|isize|bool|unit|str|type)\\b"
         },
         {
           "name": "support.function.builtin.fl",
           "match": "\\b(?:print_i64|print_bool|read_byte|print_ascii)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "intrinsics": {
+      "patterns": [
+        {
+          "name": "meta.intrinsic.specialization.fl",
+          "begin": "(@)([A-Za-z][A-Za-z0-9_]*)(\\s*)(<)",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.intrinsic.fl"
+            },
+            "2": {
+              "name": "support.function.intrinsic.fl"
+            },
+            "4": {
+              "name": "punctuation.definition.arguments.comptime.begin.fl"
+            }
+          },
+          "end": "(>)",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.arguments.comptime.end.fl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#function-literals"
+            },
+            {
+              "include": "#builtins"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#function-calls"
+            },
+            {
+              "include": "#operators"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        },
+        {
+          "match": "(@)([A-Za-z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.intrinsic.fl"
+            },
+            "2": {
+              "name": "support.function.intrinsic.fl"
+            }
+          }
         }
       ]
     },
@@ -244,6 +324,12 @@
           },
           "patterns": [
             {
+              "include": "#strings"
+            },
+            {
+              "include": "#function-literals"
+            },
+            {
               "include": "#builtins"
             },
             {
@@ -263,6 +349,31 @@
         {
           "name": "variable.function.fl",
           "match": "\\b[A-Za-z][A-Za-z0-9_]*\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.fl",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.fl"
+            }
+          },
+          "end": "\"|(?=\\n|$)",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.fl"
+            }
+          },
+          "patterns": [
+            {
+              "name": "invalid.illegal.escape.fl",
+              "match": "\\\\"
+            }
+          ]
         }
       ]
     },

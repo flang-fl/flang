@@ -11,7 +11,7 @@ comp END = 10;
 
 comp main = fn() -> i64 {
     let mut input = [0; 1024];
-    let mut input_i = 0;
+    let mut input_i = 0usize;
 
     let mut running = true;
     while running {
@@ -26,8 +26,8 @@ comp main = fn() -> i64 {
 
 
     let mut tape = [0; 1024];
-    let mut i = 0;
-    let mut ini = 0;
+    let mut i = 0usize;
+    let mut ini = 0usize;
 
     while ini < input_i {
         let next = input[ini];

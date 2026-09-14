@@ -14,5 +14,7 @@ comp main = fn() -> i64 {
         return 1;
     }
 
+    let ignored = c_put_char(10i32);
+
     return 0;
 };

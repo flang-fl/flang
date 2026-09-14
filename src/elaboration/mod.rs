@@ -4,7 +4,7 @@ use crate::diagnostics::Diagnostic;
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
 use crate::parser::ast::{ItemData, Program};
 use crate::semantic::hir::{HirBinding, HirProgram};
-use crate::semantic::symbols::{Environment, Symbol, SymbolId, SymbolKind, SymbolTable};
+use crate::semantic::symbols::{Environment, ExternAbi, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::{IntegerType, SpecializationKey, Type};
 use crate::source::SourceFile;
 use crate::TargetInfo;
@@ -196,7 +196,7 @@ impl<'src> Elaborator<'src> {
 
         let symbol = Symbol {
             name: name.clone(),
-            kind: SymbolKind::ExternFunction { link_name },
+            kind: SymbolKind::ExternFunction { link_name, abi: ExternAbi::C },
             declaration_span: None,
             type_: Type::Function {
                 parameters,

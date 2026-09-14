@@ -11,7 +11,7 @@ use crate::semantic::hir::{
     HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
     HirParameter, HirPlace, HirPlaceData, HirStatement, HirStatementData,
 };
-use crate::semantic::symbols::{Symbol, SymbolId, SymbolKind};
+use crate::semantic::symbols::{ExternAbi, Symbol, SymbolId, SymbolKind};
 use crate::semantic::types::{ComptimeKey, IntegerType, SpecializationKey, Type};
 use crate::source::Span;
 use log::info;
@@ -1595,16 +1595,30 @@ impl Elaborator<'_> {
             return HirExpression::error(span);
         }
 
-        self.diagnostics.push(Diagnostic::error(
-            "`@extern` lowering is not implemented yet",
-            span,
-            format!(
-                "validated external function `{link_name}` with ABI `{abi}`"
-            ),
-        ));
+        let external_symbol = self.symbols.insert(Symbol {
+            name: link_name.clone(),
+            declaration_span: Some(span),
+            kind: SymbolKind::ExternFunction {
+                abi: ExternAbi::C,
+                link_name: link_name.clone()
+            },
+            type_: function_type.clone()
+        });
 
-        HirExpression::error(span)
+        HirExpression {
+            type_: function_type.clone(),
+            span,
+            data: HirExpressionData::Symbol(external_symbol)
+        }
     }
+
+    fn declare_external_function(
+        &mut self,
+        abi: ExternAbi,
+        link_name: &str,
+        function_type: &Type,
+        declaration_span: Span
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
