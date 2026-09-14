@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
 use crate::parser::ast::{
@@ -7,7 +8,6 @@ use crate::parser::ast::{
 };
 use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
-use std::cmp::min;
 
 pub mod ast;
 
@@ -303,7 +303,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 span: self.source.fromto(at.span, name.span),
                 data: ExpressionData::Intrinsic {
                     name: name.span
-                }
+                },
             });
         }
 
@@ -368,18 +368,27 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             });
         }
 
+        self.diagnostics.push(Diagnostic::error(
+            "Unexpected start of expression",
+            if let Some(token) = self.peek() { token.span } else { self.source.eof_span() },
+            format!(
+                "Expression may not start with `{}`",
+                if let Some(token) = self.peek() { token.kind.display() } else { "EOF" }
+            ),
+        ));
+
         None
     }
 
     fn finish_function_type(
         &mut self,
-        signature: ParsedFunctionSignature
+        signature: ParsedFunctionSignature,
     ) -> Option<Expression> {
         if let Some(first) = signature.comptime_args.first() {
             self.diagnostics.push(Diagnostic::error(
                 "Comptime parameters in function types are not supported yet",
                 first.span,
-                "remove the comptime parameter list"
+                "remove the comptime parameter list",
             ));
 
             return None;
@@ -397,7 +406,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                     self.diagnostics.push(Diagnostic::error(
                         "Named function-type parameters are not supported yet",
                         parameter.span,
-                        "write only the parameter type"
+                        "write only the parameter type",
                     ));
 
                     return None;
@@ -408,23 +417,23 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let type_expression = TypeExpression {
             span: self.source.fromto(
                 signature.fn_span,
-                signature.return_type.span
+                signature.return_type.span,
             ),
             data: TypeExpressionData::Function {
                 parameters,
-                return_type: Box::new(signature.return_type)
-            }
+                return_type: Box::new(signature.return_type),
+            },
         };
 
         Some(Expression {
             span: type_expression.span,
-            data: ExpressionData::TypeValue(type_expression)
+            data: ExpressionData::TypeValue(type_expression),
         })
     }
 
     fn finish_function_literal(
         &mut self,
-        signature: ParsedFunctionSignature
+        signature: ParsedFunctionSignature,
     ) -> Option<Expression> {
         let mut runtime_args = Vec::new();
 
@@ -438,7 +447,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                     self.diagnostics.push(Diagnostic::error(
                         "Function implementation parameters require names",
                         type_expression.span,
-                        "add an internal parameter name"
+                        "add an internal parameter name",
                     ));
 
                     return None;
@@ -456,7 +465,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 runtime_args,
                 return_type: signature.return_type,
                 body,
-            })
+            }),
         })
     }
 
@@ -489,7 +498,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         } else {
             TypeExpression {
                 span: rparen.span,
-                data: TypeExpressionData::Unit
+                data: TypeExpressionData::Unit,
             }
         };
 
@@ -497,7 +506,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             fn_span: fn_.span,
             comptime_args,
             runtime_args,
-            return_type
+            return_type,
         })
     }
 
