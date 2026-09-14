@@ -25,6 +25,14 @@ impl SourceFile {
         }
     }
 
+    pub fn eof_span(&self) -> Span {
+        Span {
+            source: self.id,
+            start: self.source.len() - 1,
+            end: self.source.len() - 1
+        }
+    }
+
     pub fn fromto(&self, start_span: Span, end_span: Span) -> Span {
         assert_eq!(start_span.source, end_span.source);
         self.span(start_span.start, end_span.end)

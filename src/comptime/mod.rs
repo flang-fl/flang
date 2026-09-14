@@ -1,9 +1,9 @@
+use crate::parser::ast::FunctionExpression;
 use crate::semantic::hir::HirFunctionExpression;
 use crate::semantic::symbols::SymbolId;
 use crate::semantic::types::{IntegerType, Type};
 use std::cmp::PartialEq;
 use std::collections::HashMap;
-use crate::parser::ast::FunctionExpression;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FunctionTemplateId(u32);
@@ -25,6 +25,7 @@ pub enum ComptimeValue {
         value: i128,
         type_: IntegerType
     },
+    ExternFunction(SymbolId),
     Function(FunctionId),
     FunctionTemplate(FunctionTemplateId),
     Type(Type),

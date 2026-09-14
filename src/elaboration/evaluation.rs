@@ -430,9 +430,27 @@ impl Elaborator<'_> {
             HirExpressionData::Call { callee, arguments } => {
                 let callee_value = self.evaluate_expression(callee);
 
-                let ComptimeValue::Function(function_id) = callee_value else {
-                    // Semantic analysis should prevent this from occuring
-                    return ComptimeValue::Error;
+                let function_id = match callee_value {
+                    ComptimeValue::Function(function_id) => function_id,
+
+                    ComptimeValue::ExternFunction(symbol_id) => {
+                        let symbol = self.symbols.get(symbol_id);
+
+                        self.diagnostics.push(Diagnostic::error(
+                            "External function unavailable at comptime",
+                            callee.span,
+                            format!(
+                                "external function `{}` can only be called at runtime",
+                                symbol.name
+                            )
+                        ));
+
+                        return ComptimeValue::Error
+                    }
+
+                    _ => {
+                        unreachable!("semantic analysis should prevent reaching this")
+                    }
                 };
 
                 let argument_values = arguments
@@ -496,18 +514,12 @@ impl Elaborator<'_> {
                 let symbol_info = self.symbols.get(*symbol);
 
                 let message = match &symbol_info.kind {
-                    SymbolKind::ExternFunction { .. } => {
-                        format!(
-                            "runtime external function `{}` is unavailable at compile time",
-                            symbol_info.name
-                        )
+                    SymbolKind::BuiltinType(type_) => {
+                        return ComptimeValue::Type(type_.clone());
                     }
 
-                    SymbolKind::BuiltinType(_) => {
-                        format!(
-                            "internal error: built-in `{}` has no compile-time value",
-                            symbol_info.name,
-                        )
+                    SymbolKind::ExternFunction { .. } => {
+                        return ComptimeValue::ExternFunction(*symbol);
                     }
 
                     SymbolKind::Binding {

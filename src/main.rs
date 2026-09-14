@@ -780,4 +780,113 @@ mod tests {
             42,
         );
     }
+
+    #[test]
+    fn validates_literal_extern_arguments_before_lowering() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<"C", "getchar", fn() -> i32>;
+          "#,
+            "`@extern` lowering is not implemented yet",
+        );
+    }
+
+    #[test]
+    fn validates_computed_extern_arguments_before_lowering() {
+        assert_compile_error(
+            r#"
+          comp ABI = "C";
+          comp NAME = "getchar";
+          comp Signature = fn() -> i32;
+
+          comp f = @extern<ABI, NAME, Signature>;
+          "#,
+            "`@extern` lowering is not implemented yet",
+        );
+    }
+
+    #[test]
+    fn rejects_too_few_extern_arguments() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<"C", "getchar">;
+          "#,
+            "Incorrect number of arguments to `@extern`",
+        );
+    }
+
+    #[test]
+    fn rejects_too_many_extern_arguments() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<
+              "C",
+              "getchar",
+              fn() -> i32,
+              "extra"
+          >;
+          "#,
+            "Incorrect number of arguments to `@extern`",
+        );
+    }
+
+    #[test]
+    fn rejects_non_string_extern_abi() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<true, "getchar", fn() -> i32>;
+          "#,
+            "Type mismatch",
+        );
+    }
+
+    #[test]
+    fn rejects_non_string_extern_link_name() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<"C", 123, fn() -> i32>;
+          "#,
+            "Type mismatch",
+        );
+    }
+
+    #[test]
+    fn rejects_non_type_extern_signature() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<"C", "getchar", 123>;
+          "#,
+            "Type mismatch",
+        );
+    }
+
+    #[test]
+    fn rejects_non_function_extern_type() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<"C", "getchar", i32>;
+          "#,
+            "Invalid external function type",
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_external_abi() {
+        assert_compile_error(
+            r#"
+          comp f = @extern<"Rust", "getchar", fn() -> i32>;
+          "#,
+            "Unsupported external ABI",
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_specialized_intrinsic() {
+        assert_compile_error(
+            r#"
+          comp f = @whatever<"C">;
+          "#,
+            "Unknown intrinsic",
+        );
+    }
 }
