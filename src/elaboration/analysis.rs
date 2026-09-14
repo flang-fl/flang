@@ -65,8 +65,8 @@ impl Elaborator<'_> {
                 let start = expression.span.start + 1; // cut off left "
                 let end = expression.span.end - 1; // cut off right "
                 let content = self
-                    .source
-                    .span_text(self.source.span(start, end))
+                    .sources
+                    .span_text(self.sources.get_file(expression.span.source).span(start, end))
                     .to_string();
 
                 if let Some(type_) = expected
@@ -380,7 +380,7 @@ impl Elaborator<'_> {
 
             ExpressionData::Specialize { callee, arguments } => {
                 if let ExpressionData::Intrinsic { name } = &callee.data {
-                    return match self.source.span_text(*name) {
+                    return match self.sources.span_text(*name) {
                         "extern" => self.analyze_extern_intrinsic(arguments, expression.span),
 
                         other => {
@@ -560,7 +560,7 @@ impl Elaborator<'_> {
                 for (parameter, parameter_type) in
                     function.runtime_args.iter().zip(parameter_types.iter())
                 {
-                    let name = self.source.span_text(parameter.name).to_owned();
+                    let name = self.sources.span_text(parameter.name).to_owned();
 
                     if let Some(old) = names.insert(name.clone(), parameter.name) {
                         self.diagnostics.push(Diagnostic::error_with_extra_labels(
@@ -617,7 +617,7 @@ impl Elaborator<'_> {
             }
 
             ExpressionData::Name => {
-                let name = self.source.span_text(expression.span);
+                let name = self.sources.span_text(expression.span);
 
                 let Some(symbol_id) = self.environment.lookup(name) else {
                     self.diagnostics.push(Diagnostic::error(
@@ -770,7 +770,7 @@ impl Elaborator<'_> {
             }
 
             StatementData::Binding(binding) => {
-                let name = self.source.span_text(binding.name).to_owned();
+                let name = self.sources.span_text(binding.name).to_owned();
 
                 let annotated_type = binding
                     .type_annotation
@@ -886,7 +886,7 @@ impl Elaborator<'_> {
             },
 
             TypeExpressionData::Identifier => {
-                let name = self.source.span_text(expression.span);
+                let name = self.sources.span_text(expression.span);
 
                 let Some(symbol_id) = self.environment.lookup(name) else {
                     self.diagnostics.push(Diagnostic::error(
@@ -941,7 +941,7 @@ impl Elaborator<'_> {
     pub(super) fn analyze_place(&mut self, target: &Expression) -> Option<HirPlace> {
         match &target.data {
             ExpressionData::Name => {
-                let name = self.source.span_text(target.span);
+                let name = self.sources.span_text(target.span);
 
                 let Some(symbol_id) = self.environment.lookup(name) else {
                     self.diagnostics.push(Diagnostic::error(
@@ -1093,7 +1093,7 @@ impl Elaborator<'_> {
     // somewhere that gets you back a "Length" and same for like 10m but there's an ambiguity here if you also wanted 10m to mean minutes
     // interesting questions!
     fn parse_integer_literal(&mut self, span: Span) -> Option<ParsedIntegerLiteral> {
-        let text = self.source.span_text(span);
+        let text = self.sources.span_text(span);
 
         let suffix_start = text
             .find(|char: char| !char.is_ascii_digit())
@@ -1356,7 +1356,7 @@ impl Elaborator<'_> {
                 return None;
             }
 
-            let name = self.source.span_text(parameter.name).to_owned();
+            let name = self.sources.span_text(parameter.name).to_owned();
 
             if let Some(previous) = names.insert(name.clone(), parameter.name) {
                 self.diagnostics.push(Diagnostic::error_with_extra_labels(
@@ -1406,7 +1406,7 @@ impl Elaborator<'_> {
                 type_ = Type::Error;
             }
 
-            let name = self.source.span_text(parameter.name).to_owned();
+            let name = self.sources.span_text(parameter.name).to_owned();
 
             if let Some(previous) = names.insert(name.clone(), parameter.name) {
                 self.diagnostics.push(Diagnostic::error_with_extra_labels(
