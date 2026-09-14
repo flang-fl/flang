@@ -41,6 +41,10 @@ pub struct Expression {
 pub enum ExpressionData {
     Function(FunctionExpression),
     TypeValue(TypeExpression),
+    /// @blabla
+    Intrinsic {
+        name: Span
+    },
     IntegerLiteral,
     StringLiteral,
     Boolean(bool),
