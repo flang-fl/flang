@@ -10,6 +10,7 @@ resolver = "3"
 
 [dependencies]
 ariadne = "0.6.0"
+codespan-reporting = "0.13.1"
 inkwell = { version = "0.10.0", features = ["llvm22-1"]}
 log = "0.4.34"
 

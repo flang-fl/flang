@@ -1,6 +1,10 @@
 use crate::source::{SourceFileManager, Span};
-use ariadne::Label as AriadneLabel;
-use ariadne::{Color, Report, ReportKind};
+use codespan_reporting::diagnostic::{Diagnostic as CodespanDiagnostic, Label as CodespanLabel};
+use codespan_reporting::files::SimpleFiles;
+use codespan_reporting::term::{
+    self,
+    termcolor::{ColorChoice, StandardStream},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -23,34 +27,50 @@ pub trait PrintDiagnostics {
 
 impl PrintDiagnostics for [Diagnostic] {
     fn print_diagnostics(&self, file_manager: &mut SourceFileManager) {
-        for diagnostic in self.iter() {
-            let primary_color = match diagnostic.severity {
-                Severity::Error => Color::Red,
-                Severity::Warning => Color::Yellow,
+        if self.is_empty() {
+            return;
+        }
+
+        let mut files = SimpleFiles::new();
+
+        // Both managers assign IDs sequentially in insertion order.
+        // Borrow names and source text without copying their contents.
+        for file in file_manager.files() {
+            let id = files.add(file.name.as_str(), file.text());
+            debug_assert_eq!(id, file.id.0);
+        }
+
+        let config = term::Config {
+            before_label_lines: 2,
+            after_label_lines: 2,
+            ..Default::default()
+        };
+
+        let stderr = StandardStream::stderr(ColorChoice::Auto);
+        let mut writer = stderr.lock();
+
+        for diagnostic in self {
+            let report = match diagnostic.severity {
+                Severity::Error => CodespanDiagnostic::error(),
+                Severity::Warning => CodespanDiagnostic::warning(),
             };
 
-            let mut report = Report::build(match diagnostic.severity {
-                Severity::Error => ReportKind::Error,
-                Severity::Warning => ReportKind::Warning,
-            }, diagnostic.primary.span)
-                .with_message(&diagnostic.message)
-                .with_label(
-                    AriadneLabel::new(diagnostic.primary.span)
-                        .with_message(&diagnostic.primary.text)
-                        .with_color(primary_color),
-                );
+            let primary = &diagnostic.primary;
+            let mut labels = vec![
+                CodespanLabel::primary(primary.span.source.0, primary.span.start..primary.span.end)
+                    .with_message(primary.text.as_str()),
+            ];
 
-            for label in &diagnostic.others {
-                report = report.with_label(
-                    AriadneLabel::new(label.span)
-                        .with_message(&label.text)
-                        .with_color(Color::Yellow),
-                );
-            }
+            labels.extend(diagnostic.others.iter().map(|label| {
+                CodespanLabel::secondary(label.span.source.0, label.span.start..label.span.end)
+                    .with_message(label.text.as_str())
+            }));
 
-            report
-                .finish()
-                .eprint(&mut *file_manager)
+            let report = report
+                .with_message(diagnostic.message.as_str())
+                .with_labels(labels);
+
+            term::emit_to_write_style(&mut writer, &config, &files, &report)
                 .expect("failed to print diagnostic");
         }
     }
@@ -59,16 +79,20 @@ impl PrintDiagnostics for [Diagnostic] {
 impl Diagnostic {
     fn new(severity: Severity, message: String, primary: Label, others: Vec<Label>) -> Self {
         Self {
-            severity, message, primary, others,
+            severity,
+            message,
+            primary,
+            others,
         }
     }
 
-    pub fn error(
-        message: impl Into<String>,
-        span: Span,
-        text: impl Into<String>,
-    ) -> Self {
-        Self::new(Severity::Error, message.into(), Label::new(span, text.into()), vec![])
+    pub fn error(message: impl Into<String>, span: Span, text: impl Into<String>) -> Self {
+        Self::new(
+            Severity::Error,
+            message.into(),
+            Label::new(span, text.into()),
+            vec![],
+        )
     }
 
     pub fn error_with_extra_labels(
@@ -77,14 +101,15 @@ impl Diagnostic {
         text: impl Into<String>,
         extra_labels: Vec<Label>,
     ) -> Self {
-        Self::new(Severity::Error, message.into(), Label::new(span, text.into()), extra_labels)
+        Self::new(
+            Severity::Error,
+            message.into(),
+            Label::new(span, text.into()),
+            extra_labels,
+        )
     }
 
-    pub fn warning(
-        message: String,
-        span: Span,
-        text: String,
-    ) -> Self {
+    pub fn warning(message: String, span: Span, text: String) -> Self {
         Self::new(Severity::Warning, message, Label::new(span, text), vec![])
     }
 }
