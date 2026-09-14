@@ -660,4 +660,124 @@ mod tests {
             "`str` has no runtime representation",
         );
     }
+
+    #[test]
+    fn accepts_comptime_function_type_value() {
+        assert_return_value(
+            r#"
+          comp Signature = fn(i32) -> i64;
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            0,
+        );
+    }
+
+    #[test]
+    fn accepts_zero_parameter_function_type_value() {
+        assert_return_value(
+            r#"
+          comp Signature = fn() -> i32;
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            0,
+        );
+    }
+
+    #[test]
+    fn accepts_nested_function_type_value() {
+        assert_return_value(
+            r#"
+          comp Callback = fn(i32) -> i64;
+          comp HigherOrder = fn(fn(i32) -> i64) -> i64;
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            0,
+        );
+    }
+
+    #[test]
+    fn rejects_function_type_value_where_integer_is_expected() {
+        assert_compile_error(
+            r#"
+          comp invalid = fn() -> i64 {
+              return fn(i32) -> i64;
+          };
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            "Type mismatch",
+        );
+    }
+
+    #[test]
+    fn rejects_type_value_in_runtime_local() {
+        assert_compile_error(
+            r#"
+          comp main = fn() -> i64 {
+              let Signature = fn(i32) -> i64;
+              return 0;
+          };
+          "#,
+            "`type` has no runtime representation",
+        );
+    }
+
+    #[test]
+    fn rejects_type_as_runtime_parameter() {
+        assert_compile_error(
+            r#"
+          comp invalid = fn(Signature: type) -> i64 {
+              return 0;
+          };
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            "`type` has no runtime representation",
+        );
+    }
+
+    #[test]
+    fn rejects_type_as_runtime_return() {
+        assert_compile_error(
+            r#"
+          comp invalid = fn() -> type {
+              return fn(i32) -> i64;
+          };
+
+          comp main = fn() -> i64 {
+              return 0;
+          };
+          "#,
+            "`type` has no runtime representation",
+        );
+    }
+
+    #[test]
+    fn accepts_function_type_as_comptime_argument() {
+        assert_return_value(
+            r#"
+          comp inspect = fn<Signature: type>() -> i64 {
+              return 42;
+          };
+
+          comp main = fn() -> i64 {
+              return inspect<fn(i32) -> i64>();
+          };
+          "#,
+            42,
+        );
+    }
 }

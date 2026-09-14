@@ -85,6 +85,15 @@ impl<'src> Elaborator<'src> {
             environment.define(name.to_owned(), symbol_id);
         }
 
+        let type_id = symbols.insert(Symbol {
+            name: "type".to_owned(),
+            kind: SymbolKind::BuiltinType(Type::Type),
+            declaration_span: None,
+            type_: Type::Type
+        });
+
+        environment.define("type".to_owned(), type_id);
+
         let str_id = symbols.insert(Symbol {
             name: "str".to_owned(),
             kind: SymbolKind::BuiltinType(Type::Str),

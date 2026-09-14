@@ -18,6 +18,18 @@ pub struct Parser<'src, 'tokens> {
     diagnostics: Vec<Diagnostic>,
 }
 
+enum ParsedFunctionParameter {
+    Named(Parameter),
+    Unnamed(TypeExpression),
+}
+
+struct ParsedFunctionSignature {
+    fn_span: Span,
+    comptime_args: Vec<Parameter>,
+    runtime_args: Vec<ParsedFunctionParameter>,
+    return_type: TypeExpression,
+}
+
 impl<'src, 'tokens> Parser<'src, 'tokens> {
     pub fn new(source: &'src SourceFile, tokens: &'tokens [Token]) -> Self {
         Self {
@@ -332,7 +344,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         }
 
         if self.peek_is(TokenKind::Fn) {
-            return self.parse_function_literal();
+            return self.parse_function_expression();
         }
 
         if self.peek_is(TokenKind::Identifier) {
@@ -346,21 +358,155 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         None
     }
 
+    fn finish_function_type(
+        &mut self,
+        signature: ParsedFunctionSignature
+    ) -> Option<Expression> {
+        if let Some(first) = signature.comptime_args.first() {
+            self.diagnostics.push(Diagnostic::error(
+                "Comptime parameters in function types are not supported yet",
+                first.span,
+                "remove the comptime parameter list"
+            ));
+
+            return None;
+        }
+
+        let mut parameters = Vec::new();
+
+        for parameter in signature.runtime_args {
+            match parameter {
+                ParsedFunctionParameter::Unnamed(type_expression) => {
+                    parameters.push(type_expression);
+                }
+
+                ParsedFunctionParameter::Named(parameter) => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Named function-type parameters are not supported yet",
+                        parameter.span,
+                        "write only the parameter type"
+                    ));
+
+                    return None;
+                }
+            }
+        }
+
+        let type_expression = TypeExpression {
+            span: self.source.fromto(
+                signature.fn_span,
+                signature.return_type.span
+            ),
+            data: TypeExpressionData::Function {
+                parameters,
+                return_type: Box::new(signature.return_type)
+            }
+        };
+
+        Some(Expression {
+            span: type_expression.span,
+            data: ExpressionData::TypeValue(type_expression)
+        })
+    }
+
+    fn finish_function_literal(
+        &mut self,
+        signature: ParsedFunctionSignature
+    ) -> Option<Expression> {
+        let mut runtime_args = Vec::new();
+
+        for parameter in signature.runtime_args {
+            match parameter {
+                ParsedFunctionParameter::Named(parameter) => {
+                    runtime_args.push(parameter);
+                }
+
+                ParsedFunctionParameter::Unnamed(type_expression) => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Function implementation parameters require names",
+                        type_expression.span,
+                        "add an internal parameter name"
+                    ));
+
+                    return None;
+                }
+            }
+        }
+
+        let body = self.parse_block()?;
+        let span = self.source.fromto(signature.fn_span, body.span);
+
+        Some(Expression {
+            span,
+            data: ExpressionData::Function(FunctionExpression {
+                comptime_args: signature.comptime_args,
+                runtime_args,
+                return_type: signature.return_type,
+                body,
+            })
+        })
+    }
+
+    fn parse_function_signature(
+        &mut self,
+    ) -> Option<ParsedFunctionSignature> {
+        let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
+
+        let comptime_args = if self.peek_is(TokenKind::LessThan) {
+            self.expect(TokenKind::LessThan, "Expected `<` before comptime parameters")?;
+
+            let parameters = self.parse_parameters_until(TokenKind::GreaterThan)?;
+
+            self.expect(TokenKind::GreaterThan, "Expected `>` after comptime parameters")?;
+
+            parameters
+        } else {
+            Vec::new()
+        };
+
+        self.expect(TokenKind::LParen, "Expected `(` before parameters")?;
+
+        let runtime_args = self.parse_provisional_parameters()?;
+
+        let rparen = self.expect(TokenKind::RParen, "Expected `)` after parameters")?;
+
+        let return_type = if self.peek_is(TokenKind::RArrow) {
+            self.consume();
+            self.parse_type_expression()?
+        } else {
+            TypeExpression {
+                span: rparen.span,
+                data: TypeExpressionData::Unit
+            }
+        };
+
+        Some(ParsedFunctionSignature {
+            fn_span: fn_.span,
+            comptime_args,
+            runtime_args,
+            return_type
+        })
+    }
+
+    fn parse_named_parameter(&mut self) -> Option<Parameter> {
+        let identifier = self.expect(TokenKind::Identifier, "Expected parameter name")?;
+
+        self.expect(TokenKind::Colon, "Expected `:` after parameter name")?;
+
+        let type_annotation = self.parse_type_expression()?;
+
+        Some(Parameter {
+            span: self.source.fromto(identifier.span, type_annotation.span),
+            name: identifier.span,
+            type_annotation,
+        })
+    }
+
     fn parse_parameters_until(&mut self, closing: TokenKind) -> Option<Vec<Parameter>> {
         let mut parameters = Vec::new();
 
         while !self.peek_is(closing) {
-            let identifier = self.expect(TokenKind::Identifier, "Expected parameter name")?;
-
-            self.expect(TokenKind::Colon, "Expected `:` after parameter name")?;
-
-            let type_annotation = self.parse_type_expression()?;
-
-            parameters.push(Parameter {
-                span: self.source.fromto(identifier.span, type_annotation.span),
-                name: identifier.span,
-                type_annotation,
-            });
+            parameters.push(self.parse_named_parameter()?);
 
             if self.peek_is(TokenKind::Comma) {
                 self.consume();
@@ -372,55 +518,72 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         Some(parameters)
     }
 
-    fn parse_function_literal(&mut self) -> Option<Expression> {
-        let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
+    fn parse_provisional_parameters(
+        &mut self,
+    ) -> Option<Vec<ParsedFunctionParameter>> {
+        let mut parameters = Vec::new();
 
-        let comptime_args = if self.peek_is(TokenKind::LessThan) {
-            self.expect(TokenKind::LessThan, "Expected `<` before comptime args")?;
+        while !self.peek_is(TokenKind::RParen) {
+            let parameter =
+                if self.peek_is(TokenKind::Identifier)
+                    && self.peek_offset_is(1, TokenKind::Colon) {
+                    ParsedFunctionParameter::Named(self.parse_named_parameter()?)
+                } else {
+                    ParsedFunctionParameter::Unnamed(self.parse_type_expression()?)
+                };
 
-            let parameters = self.parse_parameters_until(TokenKind::GreaterThan)?;
+            parameters.push(parameter);
 
-            self.expect(TokenKind::GreaterThan, "Expected `>` after comptime args")?;
-
-            parameters
-        } else {
-            Vec::new()
-        };
-
-        self.expect(TokenKind::LParen, "Expected `(` before runtime parameters")?;
-
-        let runtime_args = self.parse_parameters_until(TokenKind::RParen)?;
-
-        let rparen = self.expect(TokenKind::RParen, "Expected `)` after runtime parameters")?;
-
-        let return_type = if self.peek_is(TokenKind::RArrow) {
-            self.expect(TokenKind::RArrow, "Expected `->`")?;
-            self.parse_type_expression()?
-        } else {
-            TypeExpression {
-                span: rparen.span,
-                data: TypeExpressionData::Unit,
+            if self.peek_is(TokenKind::Comma) {
+                self.consume();
+            } else {
+                break;
             }
-        };
+        }
 
-        let body = self.parse_block()?;
+        Some(parameters)
+    }
 
-        let end_span = body.span;
+    fn parse_function_expression(&mut self) -> Option<Expression> {
+        let signature = self.parse_function_signature()?;
 
-        let data = ExpressionData::Function(FunctionExpression {
-            comptime_args,
-            runtime_args,
-            return_type,
-            body,
-        });
-
-        Some(Expression {
-            span: self.source.fromto(fn_.span, end_span),
-            data,
-        })
+        if self.peek_is(TokenKind::LCurly) {
+            self.finish_function_literal(signature)
+        } else {
+            self.finish_function_type(signature)
+        }
     }
 
     fn parse_type_expression(&mut self) -> Option<TypeExpression> {
+        if self.peek_is(TokenKind::Fn) {
+            let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
+
+            self.expect(TokenKind::LParen, "Expected `(`")?;
+            let mut parameters = Vec::new();
+            while !self.peek_is(TokenKind::RParen) {
+                let arg_type = self.parse_type_expression()?;
+                parameters.push(arg_type);
+
+                if self.peek_is(TokenKind::Comma) {
+                    self.expect(TokenKind::Comma, "Expected `,`")?;
+                } else {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen, "Expected `)`")?;
+            self.expect(TokenKind::RArrow, "Expected `->`")?;
+
+            let return_type = self.parse_type_expression()?;
+
+            return Some(TypeExpression {
+                span: self.source.fromto(fn_.span, return_type.span),
+                data: TypeExpressionData::Function {
+                    parameters,
+                    return_type: Box::new(return_type),
+                },
+            });
+        }
+
         if self.peek_is(TokenKind::LBrack) {
             let l_brack = self.expect(TokenKind::LBrack, "Expected `[`")?;
             let size = self.parse_expression()?;
@@ -706,6 +869,22 @@ mod tests {
         assert_eq!(source.span_text(binding.expression.span), expected_literal);
     }
 
+    fn parse_error(text: &str) -> Vec<Diagnostic> {
+        let source = SourceFile {
+            id: SourceId(0),
+            name: "test.fl".to_owned(),
+            source: Source::from(text.to_owned()),
+        };
+
+        let tokens = Tokenizer::new(&source)
+            .tokenize()
+            .expect("tokenization should succeed");
+
+        Parser::new(&source, &tokens)
+            .parse()
+            .expect_err("parsing should fail")
+    }
+
     #[test]
     fn parses_string_literal_expression() {
         assert_string_binding("comp name = \"getchar\";", "\"getchar\"");
@@ -719,5 +898,210 @@ mod tests {
     #[test]
     fn parses_utf8_string_literal_expression() {
         assert_string_binding("comp name = \"héllo 世界\";", "\"héllo 世界\"");
+    }
+
+    #[test]
+    fn parses_zero_parameter_function_type_value() {
+        let (source, program) =
+            parse_source("comp Signature = fn() -> i64;");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::TypeValue(type_expression) =
+            &binding.expression.data
+        else {
+            panic!("expected a function-type value");
+        };
+
+        let TypeExpressionData::Function {
+            parameters,
+            return_type,
+        } = &type_expression.data
+        else {
+            panic!("expected a function type");
+        };
+
+        assert!(parameters.is_empty());
+        assert_eq!(source.span_text(return_type.span), "i64");
+        assert_eq!(
+            source.span_text(binding.expression.span),
+            "fn() -> i64"
+        );
+    }
+
+    #[test]
+    fn parses_one_parameter_function_type_value() {
+        let (source, program) =
+            parse_source("comp Signature = fn(i32) -> i64;");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::TypeValue(type_expression) =
+            &binding.expression.data
+        else {
+            panic!("expected a function-type value");
+        };
+
+        let TypeExpressionData::Function {
+            parameters,
+            return_type,
+        } = &type_expression.data
+        else {
+            panic!("expected a function type");
+        };
+
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(source.span_text(parameters[0].span), "i32");
+        assert_eq!(source.span_text(return_type.span), "i64");
+    }
+
+    #[test]
+    fn parses_multiple_parameter_function_type_value() {
+        let (source, program) =
+            parse_source("comp Signature = fn(i32, i64) -> i64;");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::TypeValue(type_expression) =
+            &binding.expression.data
+        else {
+            panic!("expected a function-type value");
+        };
+
+        let TypeExpressionData::Function {
+            parameters,
+            return_type,
+        } = &type_expression.data
+        else {
+            panic!("expected a function type");
+        };
+
+        assert_eq!(parameters.len(), 2);
+        assert_eq!(source.span_text(parameters[0].span), "i32");
+        assert_eq!(source.span_text(parameters[1].span), "i64");
+        assert_eq!(source.span_text(return_type.span), "i64");
+    }
+
+    #[test]
+    fn parses_nested_function_type_value() {
+        let (source, program) =
+            parse_source("comp Signature = fn(fn(i64) -> i32) -> i64;");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::TypeValue(type_expression) =
+            &binding.expression.data
+        else {
+            panic!("expected a function-type value");
+        };
+
+        let TypeExpressionData::Function {
+            parameters,
+            return_type,
+        } = &type_expression.data
+        else {
+            panic!("expected an outer function type");
+        };
+
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(
+            source.span_text(parameters[0].span),
+            "fn(i64) -> i32"
+        );
+        assert_eq!(source.span_text(return_type.span), "i64");
+
+        assert!(matches!(
+          &parameters[0].data,
+          TypeExpressionData::Function { .. }
+      ));
+    }
+
+    #[test]
+    fn still_parses_named_function_literal() {
+        let (source, program) = parse_source(
+            r#"
+          comp identity = fn(value: i64) -> i64 {
+              return value;
+          };
+          "#,
+        );
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Function(function) =
+            &binding.expression.data
+        else {
+            panic!("expected a function literal");
+        };
+
+        assert_eq!(function.runtime_args.len(), 1);
+        assert_eq!(
+            source.span_text(function.runtime_args[0].name),
+            "value"
+        );
+    }
+
+    #[test]
+    fn rejects_unnamed_function_literal_parameter() {
+        let diagnostics = parse_error(
+            r#"
+          comp invalid = fn(i64) -> i64 {
+              return 1;
+          };
+          "#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("Function implementation parameters require names")
+        }));
+    }
+
+    #[test]
+    fn rejects_named_function_type_parameter_for_now() {
+        let diagnostics =
+            parse_error("comp Signature = fn(value: i64) -> i64;");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("Named function-type parameters are not supported yet")
+        }));
+    }
+
+    #[test]
+    fn parses_function_type_annotation() {
+        let (source, program) = parse_source(
+            r#"
+          comp higher_order = fn<
+              callback: fn(i64) -> i64
+          >() -> i64 {
+              return 0;
+          };
+          "#,
+        );
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Function(function) =
+            &binding.expression.data
+        else {
+            panic!("expected a function template");
+        };
+
+        assert_eq!(function.comptime_args.len(), 1);
+
+        assert!(matches!(
+          &function.comptime_args[0].type_annotation.data,
+          TypeExpressionData::Function { .. }
+      ));
+
+        assert_eq!(
+            source.span_text(
+                function.comptime_args[0].type_annotation.span
+            ),
+            "fn(i64) -> i64"
+        );
     }
 }
