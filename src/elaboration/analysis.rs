@@ -28,7 +28,7 @@ impl Elaborator<'_> {
                 self.diagnostics.push(Diagnostic::error(
                     "Intrinsics are currently unsupported",
                     expression.span,
-                    ":("
+                    ":(",
                 ));
 
                 HirExpression::error(expression.span)
@@ -381,23 +381,18 @@ impl Elaborator<'_> {
             ExpressionData::Specialize { callee, arguments } => {
                 if let ExpressionData::Intrinsic { name } = &callee.data {
                     return match self.source.span_text(*name) {
-                        "extern" => {
-                            self.analyze_extern_intrinsic(arguments, expression.span)
-                        },
+                        "extern" => self.analyze_extern_intrinsic(arguments, expression.span),
 
                         other => {
                             self.diagnostics.push(Diagnostic::error(
                                 "Unknown intrinsic",
                                 callee.span,
-                                format!(
-                                    "Unknown intrinsic `{}`",
-                                    other
-                                )
+                                format!("Unknown intrinsic `{}`", other),
                             ));
 
                             HirExpression::error(expression.span)
                         }
-                    }
+                    };
                 }
 
                 let callee = self.analyze_expression(callee, None);
@@ -1472,9 +1467,7 @@ impl Elaborator<'_> {
 
     fn comptime_key(&mut self, value: &ComptimeValue, span: Span) -> Option<ComptimeKey> {
         match value {
-            ComptimeValue::Type(type_) => {
-                Some(ComptimeKey::Type(type_.clone()))
-            }
+            ComptimeValue::Type(type_) => Some(ComptimeKey::Type(type_.clone())),
 
             ComptimeValue::String(string) => Some(ComptimeKey::Str(string.clone())),
 
@@ -1502,7 +1495,7 @@ impl Elaborator<'_> {
             self.diagnostics.push(Diagnostic::error(
                 "`type` has no runtime representation",
                 span,
-                description
+                description,
             ));
 
             return false;
@@ -1520,34 +1513,23 @@ impl Elaborator<'_> {
         }
     }
 
-    fn analyze_extern_intrinsic(
-        &mut self,
-        arguments: &[Expression],
-        span: Span
-    ) -> HirExpression {
+    fn analyze_extern_intrinsic(&mut self, arguments: &[Expression], span: Span) -> HirExpression {
         if arguments.len() != 3 {
             self.diagnostics.push(Diagnostic::error(
                 "Incorrect number of arguments to `@extern`",
                 span,
-                format!("expected 3, but found {}", arguments.len())
+                format!("expected 3, but found {}", arguments.len()),
             ));
 
             return HirExpression::error(span);
         }
 
-        let expected_types = [
-            Type::Str,
-            Type::Str,
-            Type::Type,
-        ];
+        let expected_types = [Type::Str, Type::Str, Type::Type];
 
         let mut values = Vec::with_capacity(3);
 
-        for (argument, expected_type) in
-            arguments.iter().zip(&expected_types)
-        {
-            let hir_argument =
-                self.analyze_expression(argument, Some(expected_type));
+        for (argument, expected_type) in arguments.iter().zip(&expected_types) {
+            let hir_argument = self.analyze_expression(argument, Some(expected_type));
 
             if hir_argument.type_ == Type::Error {
                 return HirExpression::error(span);
@@ -1563,9 +1545,9 @@ impl Elaborator<'_> {
         }
 
         let [
-        ComptimeValue::String(abi),
-        ComptimeValue::String(link_name),
-        ComptimeValue::Type(function_type),
+            ComptimeValue::String(abi),
+            ComptimeValue::String(link_name),
+            ComptimeValue::Type(function_type),
         ] = values.as_slice()
         else {
             // The expected types above should make this impossible unless
@@ -1573,42 +1555,45 @@ impl Elaborator<'_> {
             unreachable!("validated @extern arguments produced unexpected values");
         };
 
-        if abi != "C" {
-            self.diagnostics.push(Diagnostic::error(
-                "Unsupported external ABI",
-                arguments[0].span,
-                format!("ABI `{abi}` is not supported; expected `C`"),
-            ));
+        let abi = match abi.as_str() {
+            "C" => ExternAbi::C,
 
-            return HirExpression::error(span);
-        }
+            unsupported => {
+                self.diagnostics.push(Diagnostic::error(
+                    "Unsupported external ABI",
+                    arguments[0].span,
+                    format!(
+                        "ABI `{unsupported}` is not supported; expected `C`"
+                    ),
+                ));
+
+                return HirExpression::error(span);
+            }
+        };
 
         if !matches!(function_type, Type::Function { .. }) {
             self.diagnostics.push(Diagnostic::error(
                 "Invalid external function type",
                 arguments[2].span,
-                format!(
-                    "expected a function type, found `{function_type:?}`"
-                ),
+                format!("expected a function type, found `{function_type:?}`"),
             ));
 
             return HirExpression::error(span);
         }
 
-        let external_symbol = self.symbols.insert(Symbol {
-            name: link_name.clone(),
-            declaration_span: Some(span),
-            kind: SymbolKind::ExternFunction {
-                abi: ExternAbi::C,
-                link_name: link_name.clone()
-            },
-            type_: function_type.clone()
-        });
+        let Some(external_symbol) = self.declare_external_function(
+            abi,
+            link_name,
+            function_type,
+            span,
+        ) else {
+            return HirExpression::error(span);
+        };
 
         HirExpression {
             type_: function_type.clone(),
             span,
-            data: HirExpressionData::Symbol(external_symbol)
+            data: HirExpressionData::Symbol(external_symbol),
         }
     }
 
@@ -1617,8 +1602,79 @@ impl Elaborator<'_> {
         abi: ExternAbi,
         link_name: &str,
         function_type: &Type,
-        declaration_span: Span
-    )
+        declaration_span: Span,
+    ) -> Option<SymbolId> {
+        let existing = self
+            .symbols
+            .symbols
+            .iter()
+            .enumerate()
+            .find_map(|(index, symbol)| {
+                let SymbolKind::ExternFunction {
+                    abi: existing_abi,
+                    link_name: existing_link_name,
+                } = &symbol.kind
+                else {
+                    return None;
+                };
+
+                if *existing_abi == abi && existing_link_name == link_name {
+                    Some((
+                        SymbolId(index as u32),
+                        symbol.type_.clone(),
+                        symbol.declaration_span,
+                    ))
+                } else {
+                    None
+                }
+            });
+
+        if let Some((existing_symbol, existing_type, existing_span)) = existing {
+            if existing_type == *function_type {
+                return Some(existing_symbol);
+            }
+
+            let message = format!(
+                "external symbol `{link_name}` was previously declared \
+                as `{existing_type:?}`, but this declaration uses \
+                `{function_type:?}`"
+            );
+
+            if let Some(existing_span) = existing_span {
+                self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                    "Conflicting external function declarations",
+                    declaration_span,
+                    message,
+                    vec![Label::new(
+                        existing_span,
+                        "previous declaration is here".to_owned()
+                    )]
+                ));
+            } else {
+                self.diagnostics.push(Diagnostic::error(
+                    "Conflicting external function declarations",
+                    declaration_span,
+                    message,
+                ));
+            }
+
+            return None;
+        }
+
+        let symbol = self.symbols.insert(Symbol {
+            name: link_name.to_owned(),
+            declaration_span: Some(declaration_span),
+
+            kind: SymbolKind::ExternFunction {
+                abi,
+                link_name: link_name.to_owned()
+            },
+
+            type_: function_type.clone(),
+        });
+
+        Some(symbol)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
