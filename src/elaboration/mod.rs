@@ -422,14 +422,17 @@ mod tests {
     }
 
     #[test]
-    fn imported_template_uses_its_defining_scope() {
+    fn public_module_function_uses_private_defining_scope() {
+        use crate::parser::ast::{Phase, Visibility};
+
         let mut sources = SourceFileManager::new();
 
         let source_a = sources.add_file(
             "a.fl".into(),
             r#"
           comp helper = 40;
-          comp add = fn<n: i64>() -> i64 {
+
+          pub comp add = fn<n: i64>() -> i64 {
               return helper + n;
           };
           "#
@@ -440,7 +443,7 @@ mod tests {
             "b.fl".into(),
             r#"
           comp helper = 2;
-          comp answer = imported_add<helper>();
+          comp answer = library.add<helper>();
           "#
             .into(),
         );
@@ -462,7 +465,6 @@ mod tests {
         let mut elaborator = Elaborator::new(&sources, source_a, TargetInfo::native());
 
         let module_a = elaborator.entry_module;
-        let scope_a = elaborator.modules.get(module_a).scope;
 
         // Create B as a sibling of A beneath built-ins.
         elaborator.environment.pop_scope();
@@ -476,14 +478,25 @@ mod tests {
 
         elaborator.collect_declarations(module_a, program_a);
 
-        // Simulate importing A.add into B by sharing its symbol ID.
-        let add = elaborator
-            .environment
-            .lookup_in(scope_a, "add")
-            .expect("A should define add");
-
+        // Supply the module value that @import will eventually produce.
         elaborator.environment.switch_scope(scope_b);
-        elaborator.environment.define("imported_add".into(), add);
+
+        let library = elaborator.symbols.insert(Symbol {
+            name: "library".into(),
+            declaration_span: None,
+            visibility: Visibility::Private,
+            kind: SymbolKind::Binding {
+                phase: Phase::Comptime,
+                mutable: false,
+            },
+            type_: Type::Module(module_a),
+        });
+
+        elaborator.environment.define("library".into(), library);
+
+        elaborator
+            .values
+            .insert(library, ComptimeValue::Module(module_a));
 
         elaborator.collect_declarations(module_b, program_b);
 
@@ -509,6 +522,108 @@ mod tests {
         );
 
         assert_eq!(elaborator.environment.current_scope(), scope_b);
+    }
+
+    #[test]
+    fn module_member_access_rejects_private_and_missing_members() {
+        use crate::parser::ast::{Phase, Visibility};
+
+        for (member, expected_message) in [
+            ("helper", "Module member is private"),
+            ("missing", "Unknown module member"),
+            ("i64", "Unknown module member"),
+        ] {
+            let mut sources = SourceFileManager::new();
+
+            let source_a = sources.add_file("a.fl".into(), "comp helper = 40;".into());
+
+            let source_b =
+                sources.add_file("b.fl".into(), format!("comp answer = library.{member};"));
+
+            let parse = |id| {
+                let source = sources.get_file(id);
+                let tokens = Tokenizer::new(source)
+                    .tokenize()
+                    .expect("tokenization should succeed");
+
+                Parser::new(source, &tokens)
+                    .parse()
+                    .expect("parsing should succeed")
+            };
+
+            let program_a = parse(source_a);
+            let program_b = parse(source_b);
+
+            let mut elaborator = Elaborator::new(&sources, source_a, TargetInfo::native());
+
+            let module_a = elaborator.entry_module;
+
+            // Create B as a sibling of A beneath built-ins.
+            elaborator.environment.pop_scope();
+            elaborator.environment.push_scope();
+
+            let scope_b = elaborator.environment.current_scope();
+            let module_b = elaborator.modules.insert(Module {
+                source: source_b,
+                scope: scope_b,
+            });
+
+            elaborator.collect_declarations(module_a, program_a);
+            elaborator.environment.switch_scope(scope_b);
+
+            let library = elaborator.symbols.insert(Symbol {
+                name: "library".into(),
+                declaration_span: None,
+                visibility: Visibility::Private,
+                kind: SymbolKind::Binding {
+                    phase: Phase::Comptime,
+                    mutable: false,
+                },
+                type_: Type::Module(module_a),
+            });
+
+            elaborator.environment.define("library".into(), library);
+            elaborator
+                .values
+                .insert(library, ComptimeValue::Module(module_a));
+
+            elaborator.collect_declarations(module_b, program_b);
+
+            assert!(
+                elaborator.diagnostics.is_empty(),
+                "unexpected setup diagnostics for {member}: {:#?}",
+                elaborator.diagnostics,
+            );
+
+            let answer = elaborator
+                .environment
+                .lookup_in(scope_b, "answer")
+                .expect("B should define answer");
+
+            let result = elaborator.ensure_binding_evaluated(answer);
+
+            assert!(result.is_err(), "access to library.{member} should fail",);
+
+            let diagnostic = elaborator
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.message == expected_message)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "expected {expected_message:?} for {member}, got: {:#?}",
+                        elaborator.diagnostics,
+                    )
+                });
+
+            assert_eq!(diagnostic.primary.span.source, source_b);
+            assert_eq!(sources.span_text(diagnostic.primary.span), member,);
+
+            assert_eq!(
+                elaborator.environment.current_scope(),
+                scope_b,
+                "scope should be restored after rejecting {member}",
+            );
+        }
     }
 
     #[test]
@@ -568,5 +683,35 @@ mod tests {
             elaborator.symbols.get(helper).visibility,
             Visibility::Private,
         );
+    }
+
+    #[test]
+    fn rejects_module_as_runtime_type() {
+        let mut sources = SourceFileManager::new();
+        let entry = sources.add_file("main.fl".into(), "std".into());
+        let span = sources.get_file(entry).span(0, 3);
+
+        let mut elaborator = Elaborator::new(&sources, entry, TargetInfo::native());
+
+        let module_type = Type::Module(elaborator.entry_module);
+
+        let accepted = elaborator.validate_runtime_type(
+            &module_type,
+            span,
+            "runtime bindings cannot contain modules",
+        );
+
+        assert!(!accepted);
+        assert_eq!(elaborator.diagnostics.len(), 1);
+
+        let diagnostic = &elaborator.diagnostics[0];
+
+        assert_eq!(
+            diagnostic.message,
+            "`module ModuleId(0)` has no runtime representation",
+        );
+        assert_eq!(diagnostic.primary.span.source, entry);
+        assert_eq!(diagnostic.primary.span.start, 0);
+        assert_eq!(diagnostic.primary.span.end, 3);
     }
 }

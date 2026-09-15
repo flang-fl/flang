@@ -25,6 +25,7 @@ pub enum TokenKind {
     // Symbols
     At,                 // @
     Eq,                 // =
+    Dot,                // .
     EqEq,               // ==
     Semi,               // ;
     Plus,               // +
@@ -75,6 +76,7 @@ impl TokenKind {
 
             At => "@",
             Eq => "=",
+            Dot => ".",
             EqEq => "==",
             Semi => ";",
             Plus => "+",

@@ -1,9 +1,13 @@
-use std::fmt::Debug;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While};
+use crate::parser::ast::{
+    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
+    Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression,
+    TypeExpressionData, UnaryOperator, Visibility, While,
+};
 use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
+use std::fmt::Debug;
 
 pub mod ast;
 
@@ -70,9 +74,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         let comp = self.expect(TokenKind::Comp, "Expected `comp` at top-level Declaration")?;
 
-        let start = public_prefix
-            .map(|token| token.span)
-            .unwrap_or(comp.span);
+        let start = public_prefix.map(|token| token.span).unwrap_or(comp.span);
 
         let identifier = self.expect(
             TokenKind::Identifier,
@@ -155,11 +157,15 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         loop {
             let intrinsic = matches!(expression.data, ExpressionData::Intrinsic { .. });
-            if self.peek_is(TokenKind::LParen) {
+            if self.peek_is(TokenKind::Dot) {
+                expression = self.parse_member_expression(expression)?
+            } else if self.peek_is(TokenKind::LParen) {
                 expression = self.parse_call_expression(expression)?;
             } else if self.peek_is(TokenKind::LBrack) {
                 expression = self.parse_index_expression(expression)?;
-            } else if self.peek_is(TokenKind::LessThan) && (intrinsic || self.looks_like_specialization()) {
+            } else if self.peek_is(TokenKind::LessThan)
+                && (intrinsic || self.looks_like_specialization())
+            {
                 expression = self.parse_specialization_expression(expression)?;
             } else {
                 break;
@@ -314,9 +320,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
             return Some(Expression {
                 span: self.source.fromto(at.span, name.span),
-                data: ExpressionData::Intrinsic {
-                    name: name.span
-                },
+                data: ExpressionData::Intrinsic { name: name.span },
             });
         }
 
@@ -383,20 +387,25 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         self.diagnostics.push(Diagnostic::error(
             "Unexpected start of expression",
-            if let Some(token) = self.peek() { token.span } else { self.source.eof_span() },
+            if let Some(token) = self.peek() {
+                token.span
+            } else {
+                self.source.eof_span()
+            },
             format!(
                 "Expression may not start with `{}`",
-                if let Some(token) = self.peek() { token.kind.display() } else { "EOF" }
+                if let Some(token) = self.peek() {
+                    token.kind.display()
+                } else {
+                    "EOF"
+                }
             ),
         ));
 
         None
     }
 
-    fn finish_function_type(
-        &mut self,
-        signature: ParsedFunctionSignature,
-    ) -> Option<Expression> {
+    fn finish_function_type(&mut self, signature: ParsedFunctionSignature) -> Option<Expression> {
         if let Some(first) = signature.comptime_args.first() {
             self.diagnostics.push(Diagnostic::error(
                 "Comptime parameters in function types are not supported yet",
@@ -428,10 +437,9 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         }
 
         let type_expression = TypeExpression {
-            span: self.source.fromto(
-                signature.fn_span,
-                signature.return_type.span,
-            ),
+            span: self
+                .source
+                .fromto(signature.fn_span, signature.return_type.span),
             data: TypeExpressionData::Function {
                 parameters,
                 return_type: Box::new(signature.return_type),
@@ -482,17 +490,21 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         })
     }
 
-    fn parse_function_signature(
-        &mut self,
-    ) -> Option<ParsedFunctionSignature> {
+    fn parse_function_signature(&mut self) -> Option<ParsedFunctionSignature> {
         let fn_ = self.expect(TokenKind::Fn, "Expected `fn`")?;
 
         let comptime_args = if self.peek_is(TokenKind::LessThan) {
-            self.expect(TokenKind::LessThan, "Expected `<` before comptime parameters")?;
+            self.expect(
+                TokenKind::LessThan,
+                "Expected `<` before comptime parameters",
+            )?;
 
             let parameters = self.parse_parameters_until(TokenKind::GreaterThan)?;
 
-            self.expect(TokenKind::GreaterThan, "Expected `>` after comptime parameters")?;
+            self.expect(
+                TokenKind::GreaterThan,
+                "Expected `>` after comptime parameters",
+            )?;
 
             parameters
         } else {
@@ -553,19 +565,17 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         Some(parameters)
     }
 
-    fn parse_provisional_parameters(
-        &mut self,
-    ) -> Option<Vec<ParsedFunctionParameter>> {
+    fn parse_provisional_parameters(&mut self) -> Option<Vec<ParsedFunctionParameter>> {
         let mut parameters = Vec::new();
 
         while !self.peek_is(TokenKind::RParen) {
-            let parameter =
-                if self.peek_is(TokenKind::Identifier)
-                    && self.peek_offset_is(1, TokenKind::Colon) {
-                    ParsedFunctionParameter::Named(self.parse_named_parameter()?)
-                } else {
-                    ParsedFunctionParameter::Unnamed(self.parse_type_expression()?)
-                };
+            let parameter = if self.peek_is(TokenKind::Identifier)
+                && self.peek_offset_is(1, TokenKind::Colon)
+            {
+                ParsedFunctionParameter::Named(self.parse_named_parameter()?)
+            } else {
+                ParsedFunctionParameter::Unnamed(self.parse_type_expression()?)
+            };
 
             parameters.push(parameter);
 
@@ -741,7 +751,8 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                         },
                     })
                 } else {
-                    let semi = self.expect(TokenKind::Semi, "Expected `;` after statement expression")?;
+                    let semi =
+                        self.expect(TokenKind::Semi, "Expected `;` after statement expression")?;
 
                     Some(Statement {
                         span: self.source.fromto(target_or_expression.span, semi.span),
@@ -755,19 +766,19 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                     "Unexpected start of Statement",
                     match self.peek() {
                         Some(token) => token.span,
-                        None => self.source.eof_span()
+                        None => self.source.eof_span(),
                     },
                     format!(
                         "`{}` is not a valid statement starter",
                         match self.peek() {
                             Some(token) => token.kind.display(),
-                            None => "EOF"
+                            None => "EOF",
                         }
-                    )
+                    ),
                 ));
 
                 None
-            },
+            }
         }
     }
 
@@ -879,6 +890,20 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         self.index += 1;
         Some(token)
     }
+
+    fn parse_member_expression(&mut self, base: Expression) -> Option<Expression> {
+        self.expect(TokenKind::Dot, "Expected `.`")?;
+
+        let name = self.expect(TokenKind::Identifier, "Expected member name after `.`")?;
+
+        Some(Expression {
+            span: self.source.fromto(base.span, name.span),
+            data: ExpressionData::Member {
+                base: Box::new(base),
+                name: name.span,
+            },
+        })
+    }
 }
 
 #[cfg(test)]
@@ -954,14 +979,11 @@ mod tests {
 
     #[test]
     fn parses_zero_parameter_function_type_value() {
-        let (source, program) =
-            parse_source("comp Signature = fn() -> i64;");
+        let (source, program) = parse_source("comp Signature = fn() -> i64;");
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::TypeValue(type_expression) =
-            &binding.expression.data
-        else {
+        let ExpressionData::TypeValue(type_expression) = &binding.expression.data else {
             panic!("expected a function-type value");
         };
 
@@ -975,22 +997,16 @@ mod tests {
 
         assert!(parameters.is_empty());
         assert_eq!(source.span_text(return_type.span), "i64");
-        assert_eq!(
-            source.span_text(binding.expression.span),
-            "fn() -> i64"
-        );
+        assert_eq!(source.span_text(binding.expression.span), "fn() -> i64");
     }
 
     #[test]
     fn parses_one_parameter_function_type_value() {
-        let (source, program) =
-            parse_source("comp Signature = fn(i32) -> i64;");
+        let (source, program) = parse_source("comp Signature = fn(i32) -> i64;");
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::TypeValue(type_expression) =
-            &binding.expression.data
-        else {
+        let ExpressionData::TypeValue(type_expression) = &binding.expression.data else {
             panic!("expected a function-type value");
         };
 
@@ -1009,14 +1025,11 @@ mod tests {
 
     #[test]
     fn parses_multiple_parameter_function_type_value() {
-        let (source, program) =
-            parse_source("comp Signature = fn(i32, i64) -> i64;");
+        let (source, program) = parse_source("comp Signature = fn(i32, i64) -> i64;");
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::TypeValue(type_expression) =
-            &binding.expression.data
-        else {
+        let ExpressionData::TypeValue(type_expression) = &binding.expression.data else {
             panic!("expected a function-type value");
         };
 
@@ -1036,14 +1049,11 @@ mod tests {
 
     #[test]
     fn parses_nested_function_type_value() {
-        let (source, program) =
-            parse_source("comp Signature = fn(fn(i64) -> i32) -> i64;");
+        let (source, program) = parse_source("comp Signature = fn(fn(i64) -> i32) -> i64;");
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::TypeValue(type_expression) =
-            &binding.expression.data
-        else {
+        let ExpressionData::TypeValue(type_expression) = &binding.expression.data else {
             panic!("expected a function-type value");
         };
 
@@ -1056,16 +1066,13 @@ mod tests {
         };
 
         assert_eq!(parameters.len(), 1);
-        assert_eq!(
-            source.span_text(parameters[0].span),
-            "fn(i64) -> i32"
-        );
+        assert_eq!(source.span_text(parameters[0].span), "fn(i64) -> i32");
         assert_eq!(source.span_text(return_type.span), "i64");
 
         assert!(matches!(
-          &parameters[0].data,
-          TypeExpressionData::Function { .. }
-      ));
+            &parameters[0].data,
+            TypeExpressionData::Function { .. }
+        ));
     }
 
     #[test]
@@ -1080,17 +1087,12 @@ mod tests {
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::Function(function) =
-            &binding.expression.data
-        else {
+        let ExpressionData::Function(function) = &binding.expression.data else {
             panic!("expected a function literal");
         };
 
         assert_eq!(function.runtime_args.len(), 1);
-        assert_eq!(
-            source.span_text(function.runtime_args[0].name),
-            "value"
-        );
+        assert_eq!(source.span_text(function.runtime_args[0].name), "value");
     }
 
     #[test]
@@ -1112,8 +1114,7 @@ mod tests {
 
     #[test]
     fn rejects_named_function_type_parameter_for_now() {
-        let diagnostics =
-            parse_error("comp Signature = fn(value: i64) -> i64;");
+        let diagnostics = parse_error("comp Signature = fn(value: i64) -> i64;");
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic
@@ -1136,23 +1137,19 @@ mod tests {
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::Function(function) =
-            &binding.expression.data
-        else {
+        let ExpressionData::Function(function) = &binding.expression.data else {
             panic!("expected a function template");
         };
 
         assert_eq!(function.comptime_args.len(), 1);
 
         assert!(matches!(
-          &function.comptime_args[0].type_annotation.data,
-          TypeExpressionData::Function { .. }
-      ));
+            &function.comptime_args[0].type_annotation.data,
+            TypeExpressionData::Function { .. }
+        ));
 
         assert_eq!(
-            source.span_text(
-                function.comptime_args[0].type_annotation.span
-            ),
+            source.span_text(function.comptime_args[0].type_annotation.span),
             "fn(i64) -> i64"
         );
     }
@@ -1163,9 +1160,7 @@ mod tests {
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::Intrinsic { name } =
-            &binding.expression.data
-        else {
+        let ExpressionData::Intrinsic { name } = &binding.expression.data else {
             panic!("expected an intrinsic");
         };
 
@@ -1179,11 +1174,7 @@ mod tests {
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::Call {
-            callee,
-            arguments,
-        } = &binding.expression.data
-        else {
+        let ExpressionData::Call { callee, arguments } = &binding.expression.data else {
             panic!("expected a call");
         };
 
@@ -1199,17 +1190,11 @@ mod tests {
 
     #[test]
     fn parses_specialized_extern_intrinsic() {
-        let (source, program) = parse_source(
-            r#"comp x = @extern<"C", "getchar", fn() -> i32>;"#,
-        );
+        let (source, program) = parse_source(r#"comp x = @extern<"C", "getchar", fn() -> i32>;"#);
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::Specialize {
-            callee,
-            arguments,
-        } = &binding.expression.data
-        else {
+        let ExpressionData::Specialize { callee, arguments } = &binding.expression.data else {
             panic!("expected intrinsic specialization");
         };
 
@@ -1220,31 +1205,18 @@ mod tests {
         assert_eq!(source.span_text(*name), "extern");
         assert_eq!(arguments.len(), 3);
 
-        assert!(matches!(
-          arguments[0].data,
-          ExpressionData::StringLiteral
-      ));
-        assert!(matches!(
-          arguments[1].data,
-          ExpressionData::StringLiteral
-      ));
-        assert!(matches!(
-          arguments[2].data,
-          ExpressionData::TypeValue(_)
-      ));
+        assert!(matches!(arguments[0].data, ExpressionData::StringLiteral));
+        assert!(matches!(arguments[1].data, ExpressionData::StringLiteral));
+        assert!(matches!(arguments[2].data, ExpressionData::TypeValue(_)));
 
         assert_eq!(source.span_text(arguments[0].span), "\"C\"");
         assert_eq!(source.span_text(arguments[1].span), "\"getchar\"");
-        assert_eq!(
-            source.span_text(arguments[2].span),
-            "fn() -> i32"
-        );
+        assert_eq!(source.span_text(arguments[2].span), "fn() -> i32");
     }
 
     #[test]
     fn parses_runtime_call_after_intrinsic_specialization() {
-        let (source, program) =
-            parse_source(r#"comp x = @foo<"compile-time">(123);"#);
+        let (source, program) = parse_source(r#"comp x = @foo<"compile-time">(123);"#);
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
@@ -1257,10 +1229,7 @@ mod tests {
         };
 
         assert_eq!(runtime_arguments.len(), 1);
-        assert_eq!(
-            source.span_text(runtime_arguments[0].span),
-            "123"
-        );
+        assert_eq!(source.span_text(runtime_arguments[0].span), "123");
 
         let ExpressionData::Specialize {
             callee,
@@ -1309,5 +1278,52 @@ mod tests {
                 .text
                 .contains("Expected identifier after `@`")
         }));
+    }
+
+    #[test]
+    fn parses_chained_member_call() {
+        use crate::source::SourceFileManager;
+        use crate::tokenizer::Tokenizer;
+
+        let mut sources = SourceFileManager::new();
+        let id = sources.add_file(
+            "test.fl".into(),
+            "comp result = std.io.print(42);".into(),
+        );
+        let source = sources.get_file(id);
+
+        let tokens = Tokenizer::new(source)
+            .tokenize()
+            .expect("tokenization should succeed");
+
+        let program = Parser::new(source, &tokens)
+            .parse()
+            .expect("parsing should succeed");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Call { callee, arguments } =
+            &binding.expression.data
+        else {
+            panic!("expected a call");
+        };
+
+        assert_eq!(arguments.len(), 1);
+        assert_eq!(source.span_text(arguments[0].span), "42");
+
+        let ExpressionData::Member { base, name } = &callee.data else {
+            panic!("expected .print");
+        };
+
+        assert_eq!(source.span_text(*name), "print");
+        assert_eq!(source.span_text(callee.span), "std.io.print");
+
+        let ExpressionData::Member { base, name } = &base.data else {
+            panic!("expected .io");
+        };
+
+        assert_eq!(source.span_text(*name), "io");
+        assert!(matches!(&base.data, ExpressionData::Name));
+        assert_eq!(source.span_text(base.span), "std");
     }
 }

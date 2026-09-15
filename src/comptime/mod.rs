@@ -1,6 +1,6 @@
 use crate::parser::ast::FunctionExpression;
 use crate::semantic::hir::HirFunctionExpression;
-use crate::semantic::symbols::{ScopeId, SymbolId};
+use crate::semantic::symbols::{ModuleId, ScopeId, SymbolId};
 use crate::semantic::types::{IntegerType, Type};
 use std::cmp::PartialEq;
 use std::collections::HashMap;
@@ -26,6 +26,7 @@ pub enum ComptimeValue {
         value: i128,
         type_: IntegerType
     },
+    Module(ModuleId),
     ExternFunction(SymbolId),
     Function(FunctionId),
     FunctionTemplate(FunctionTemplateId),

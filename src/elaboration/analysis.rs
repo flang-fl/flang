@@ -3,7 +3,10 @@ use crate::comptime::{
     ComptimeFunction, ComptimeValue, FunctionId, FunctionTemplate, FunctionTemplateId,
 };
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While};
+use crate::parser::ast::{
+    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
+    Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While,
+};
 use crate::semantic::hir::{
     HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
     HirParameter, HirPlace, HirPlaceData, HirStatement, HirStatementData,
@@ -21,6 +24,78 @@ impl Elaborator<'_> {
         expected: Option<&Type>,
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::Member { base, name } => {
+                let base_hir = self.analyze_expression(base, None);
+
+                if base_hir.type_ == Type::Error {
+                    return HirExpression::error(expression.span);
+                }
+
+                if !matches!(&base_hir.type_, Type::Module(_)) {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Member access requires a module",
+                        base.span,
+                        format!(
+                            "Expected a module, found `{:?}`",
+                            base_hir.type_
+                        )
+                    ));
+
+                    return HirExpression::error(expression.span);
+                }
+
+                let module = match self.evaluate_expression(&base_hir) {
+                    ComptimeValue::Module(module) => module,
+
+                    ComptimeValue::Error => {
+                        return HirExpression::error(expression.span);
+                    }
+
+                    _ => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Expected a comptime module value",
+                            base.span,
+                            "The expression did not evaluate to a module",
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                };
+
+                let scope = self.modules.get(module).scope;
+                let member_name = self.sources.span_text(*name);
+
+                let Some(symbol) =
+                    self.environment.lookup_in(scope, member_name)
+                else {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Unknown module member",
+                        *name,
+                        format!(
+                            "This module does not declare `{member_name}`"
+                        )
+                    ));
+
+                    return HirExpression::error(expression.span);
+                };
+
+                if self.symbols.get(symbol).visibility != Visibility::Public {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Module member is private",
+                        *name,
+                        format!("`{member_name}` is not declared with `pub`")
+                    ));
+
+                    return HirExpression::error(expression.span);
+                }
+
+                self.analyze_symbol_reference(
+                    symbol,
+                    expression.span,
+                    expected,
+                )
+            }
+
             ExpressionData::Intrinsic { name } => {
                 self.diagnostics.push(Diagnostic::error(
                     "Intrinsics are currently unsupported",
@@ -63,7 +138,11 @@ impl Elaborator<'_> {
                 let end = expression.span.end - 1; // cut off right "
                 let content = self
                     .sources
-                    .span_text(self.sources.get_file(expression.span.source).span(start, end))
+                    .span_text(
+                        self.sources
+                            .get_file(expression.span.source)
+                            .span(start, end),
+                    )
                     .to_string();
 
                 if let Some(type_) = expected
@@ -512,7 +591,7 @@ impl Elaborator<'_> {
                 if !function.comptime_args.is_empty() {
                     let template_id = self.function_templates.insert(FunctionTemplate {
                         ast: function.clone(),
-                        defining_scope: self.environment.current_scope()
+                        defining_scope: self.environment.current_scope(),
                     });
 
                     return HirExpression {
@@ -618,7 +697,7 @@ impl Elaborator<'_> {
             ExpressionData::Name => {
                 let name = self.sources.span_text(expression.span);
 
-                let Some(symbol_id) = self.environment.lookup(name) else {
+                let Some(symbol) = self.environment.lookup(name) else {
                     self.diagnostics.push(Diagnostic::error(
                         "Identifier not bound",
                         expression.span,
@@ -627,50 +706,11 @@ impl Elaborator<'_> {
                     return HirExpression::error(expression.span);
                 };
 
-                let mut actual_type = self.symbols.get(symbol_id).type_.clone();
-
-                if actual_type == Type::Unknown && self.pending_bindings.contains_key(&symbol_id) {
-                    if self.ensure_binding_elaborated(symbol_id).is_err() {
-                        return HirExpression::error(expression.span);
-                    }
-
-                    actual_type = self.symbols.get(symbol_id).type_.clone();
-                }
-
-                if actual_type == Type::Unknown {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Identifier not yet bound",
-                        expression.span,
-                        format!("Identifier `{name}` is not yet bound, in the future this will be allowed but rn stuff is evaluated top to bottom"),
-                    ));
-                    return HirExpression::error(expression.span);
-                }
-
-                if actual_type == Type::Error {
-                    // The binding already produced a diagnostic
-                    return HirExpression::error(expression.span);
-                }
-
-                if let Some(expected_type) = expected {
-                    if *expected_type != Type::Error && *expected_type != actual_type {
-                        self.diagnostics.push(Diagnostic::error(
-                            format!(
-                                "Expected an expression of type `{:?}` but got an expression of type `{:?}`",
-                                expected_type, actual_type
-                            ),
-                            expression.span,
-                            format!("Should be of type `{:?}`", expected_type),
-                        ));
-
-                        return HirExpression::error(expression.span);
-                    }
-                }
-
-                HirExpression {
-                    span: expression.span,
-                    type_: actual_type,
-                    data: HirExpressionData::Symbol(symbol_id),
-                }
+                self.analyze_symbol_reference(
+                    symbol,
+                    expression.span,
+                    expected,
+                )
             }
         }
     }
@@ -1500,26 +1540,35 @@ impl Elaborator<'_> {
         }
     }
 
-    fn validate_runtime_type(&mut self, type_: &Type, span: Span, description: &str) -> bool {
-        if *type_ == Type::Type {
+    pub(super) fn validate_runtime_type(
+        &mut self,
+        type_: &Type,
+        span: Span,
+        description: &str,
+    ) -> bool {
+        let mut diagnostic_unsized = |type_name: &str| {
             self.diagnostics.push(Diagnostic::error(
-                "`type` has no runtime representation",
+                format!("`{}` has no runtime representation", type_name),
                 span,
                 description,
             ));
+        };
 
-            return false;
-        }
-        if *type_ == Type::Str {
-            self.diagnostics.push(Diagnostic::error(
-                "`str` has no runtime representation",
-                span,
-                description,
-            ));
+        match type_ {
+            Type::Type => {
+                diagnostic_unsized("type");
+                false
+            }
+            Type::Str => {
+                diagnostic_unsized("str");
+                false
+            }
+            Type::Module(id) => {
+                diagnostic_unsized(&format!("module {:?}", id));
+                false
+            }
 
-            false
-        } else {
-            true
+            _ => true,
         }
     }
 
@@ -1572,9 +1621,7 @@ impl Elaborator<'_> {
                 self.diagnostics.push(Diagnostic::error(
                     "Unsupported external ABI",
                     arguments[0].span,
-                    format!(
-                        "ABI `{unsupported}` is not supported; expected `C`"
-                    ),
+                    format!("ABI `{unsupported}` is not supported; expected `C`"),
                 ));
 
                 return HirExpression::error(span);
@@ -1591,12 +1638,9 @@ impl Elaborator<'_> {
             return HirExpression::error(span);
         }
 
-        let Some(external_symbol) = self.declare_external_function(
-            abi,
-            link_name,
-            function_type,
-            span,
-        ) else {
+        let Some(external_symbol) =
+            self.declare_external_function(abi, link_name, function_type, span)
+        else {
             return HirExpression::error(span);
         };
 
@@ -1657,8 +1701,8 @@ impl Elaborator<'_> {
                     message,
                     vec![Label::new(
                         existing_span,
-                        "previous declaration is here".to_owned()
-                    )]
+                        "previous declaration is here".to_owned(),
+                    )],
                 ));
             } else {
                 self.diagnostics.push(Diagnostic::error(
@@ -1675,16 +1719,70 @@ impl Elaborator<'_> {
             name: link_name.to_owned(),
             declaration_span: Some(declaration_span),
             visibility: Visibility::Private,
-            
+
             kind: SymbolKind::ExternFunction {
                 abi,
-                link_name: link_name.to_owned()
+                link_name: link_name.to_owned(),
             },
 
             type_: function_type.clone(),
         });
 
         Some(symbol)
+    }
+
+    fn analyze_symbol_reference(
+        &mut self,
+        symbol: SymbolId,
+        span: Span,
+        expected: Option<&Type>,
+    ) -> HirExpression {
+        let mut actual_type = self.symbols.get(symbol).type_.clone();
+
+        if actual_type == Type::Unknown && self.pending_bindings.contains_key(&symbol) {
+            if self.ensure_binding_elaborated(symbol).is_err() {
+                return HirExpression::error(span);
+            }
+
+            actual_type = self.symbols.get(symbol).type_.clone();
+        }
+
+        if actual_type == Type::Unknown {
+            let name = &self.symbols.get(symbol).name;
+
+            self.diagnostics.push(Diagnostic::error(
+                "Identifier not yet bound",
+                span,
+                format!("Cannot determine the type of `{name}`"),
+            ));
+
+            return HirExpression::error(span);
+        }
+
+        if actual_type == Type::Error {
+            return HirExpression::error(span);
+        }
+
+        if let Some(expected_type) = expected {
+            if *expected_type != Type::Error && *expected_type != actual_type {
+                self.diagnostics.push(Diagnostic::error(
+                    format!(
+                        "Expected an expression of type `{:?}` but got an expression of type `{:?}`",
+                        expected_type, actual_type
+                    ),
+                    span,
+                    format!("Should be of type `{:?}`", expected_type)
+                ));
+
+                return HirExpression::error(span);
+            }
+        }
+
+        HirExpression {
+            span,
+            type_: actual_type,
+            data: HirExpressionData::Symbol(symbol),
+        }
     }
 }
 

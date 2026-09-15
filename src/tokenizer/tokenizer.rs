@@ -215,6 +215,7 @@ impl<'src> Tokenizer<'src> {
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             '@' => TokenKind::At,
+            '.' => TokenKind::Dot,
 
             '+' => {
                 return self.single_or_double_tokens(

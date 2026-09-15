@@ -1,9 +1,11 @@
 use crate::comptime::FunctionTemplateId;
+use crate::semantic::symbols::ModuleId;
 use crate::TargetInfo;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Integer(IntegerType),
+    Module(ModuleId),
     Bool,
     Str,
     Unit,

@@ -929,4 +929,18 @@ mod tests {
             "Unknown intrinsic",
         );
     }
+
+    #[test]
+    fn rejects_member_access_on_integer() {
+        assert_compile_error(
+            r#"
+          comp number = 42;
+
+          comp main = fn() -> i64 {
+              return number.answer;
+          };
+          "#,
+            "Member access requires a module",
+        );
+    }
 }
