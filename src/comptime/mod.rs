@@ -1,6 +1,6 @@
 use crate::parser::ast::FunctionExpression;
 use crate::semantic::hir::HirFunctionExpression;
-use crate::semantic::symbols::SymbolId;
+use crate::semantic::symbols::{ScopeId, SymbolId};
 use crate::semantic::types::{IntegerType, Type};
 use std::cmp::PartialEq;
 use std::collections::HashMap;
@@ -16,7 +16,8 @@ impl FunctionTemplateId {
 
 #[derive(Debug, Clone)]
 pub struct FunctionTemplate {
-    pub ast: FunctionExpression
+    pub ast: FunctionExpression,
+    pub defining_scope: ScopeId,
 }
 
 #[derive(Debug, Clone, PartialEq)]

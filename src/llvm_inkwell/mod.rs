@@ -158,11 +158,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
     }
 
     fn emit_main_wrapper(&self) -> Result<(), String> {
-        let (main_symbol_id, _) = self
+        let main_symbol_id = self
             .program
-            .symbols
-            .find_by_name("main")
-            .ok_or_else(|| "program does not define `main`".to_owned())?;
+            .entry_symbol
+            .ok_or_else(|| "entry module does not define `main`".to_owned())?;
 
         let function_id = match self.program.values.get(main_symbol_id) {
             Some(ComptimeValue::Function(function_id)) => *function_id,

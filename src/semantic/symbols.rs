@@ -57,6 +57,11 @@ impl Environment {
         self.current
     }
 
+    pub fn switch_scope(&mut self, scope: ScopeId) -> ScopeId {
+        assert!(scope.0 < self.scopes.len());
+        std::mem::replace(&mut self.current, scope)
+    }
+
     pub fn new() -> Self {
         let root = Scope {
             parent: None,
@@ -92,6 +97,10 @@ impl Environment {
 
     pub fn lookup(&self, name: &str) -> Option<SymbolId> {
         self.lookup_from(self.current, name)
+    }
+
+    pub fn lookup_in(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
+        self.scopes[scope.0].bindings.get(name).copied()
     }
 
     pub fn lookup_from(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
@@ -174,4 +183,36 @@ pub enum SymbolKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExternAbi {
     C,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entry_lookup_ignores_main_in_another_scope() {
+        let mut environment = Environment::new();
+
+        environment.push_scope();
+        let other_scope = environment.current_scope();
+        environment.define("main".into(), SymbolId(10));
+        environment.pop_scope();
+
+        environment.push_scope();
+        let entry_scope = environment.current_scope();
+
+        // Another module's main cannot supply the entry point.
+        assert_eq!(environment.lookup_in(entry_scope, "main"), None);
+
+        environment.define("main".into(), SymbolId(20));
+
+        assert_eq!(
+              environment.lookup_in(entry_scope, "main"),
+              Some(SymbolId(20)),
+          );
+        assert_eq!(
+              environment.lookup_in(other_scope, "main"),
+              Some(SymbolId(10)),
+          );
+    }
 }

@@ -515,6 +515,7 @@ impl Elaborator<'_> {
                 if !function.comptime_args.is_empty() {
                     let template_id = self.function_templates.insert(FunctionTemplate {
                         ast: function.clone(),
+                        defining_scope: self.environment.current_scope()
                     });
 
                     return HirExpression {
@@ -1273,11 +1274,15 @@ impl Elaborator<'_> {
             return None;
         }
 
+        let caller_scope = self.environment.switch_scope(template.defining_scope);
+
         let comptime_types = function
             .comptime_args
             .iter()
             .map(|parameter| self.resolve_type_expression(&parameter.type_annotation))
             .collect::<Vec<_>>();
+
+        self.environment.switch_scope(caller_scope);
 
         if comptime_types.iter().any(|type_| *type_ == Type::Error) {
             return None;
@@ -1327,7 +1332,11 @@ impl Elaborator<'_> {
             return None;
         }
 
+        let caller_scope = self.environment.switch_scope(template.defining_scope);
+
         let function_id = self.elaborate_specialization(&function, values);
+
+        self.environment.switch_scope(caller_scope);
 
         self.active_specializations.remove(&key);
 
