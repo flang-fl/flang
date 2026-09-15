@@ -3,10 +3,7 @@ use crate::comptime::{
     ComptimeFunction, ComptimeValue, FunctionId, FunctionTemplate, FunctionTemplateId,
 };
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{
-    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
-    Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, While,
-};
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While};
 use crate::semantic::hir::{
     HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
     HirParameter, HirPlace, HirPlaceData, HirStatement, HirStatementData,
@@ -577,6 +574,7 @@ impl Elaborator<'_> {
 
                     let symbol_id = self.symbols.insert(Symbol {
                         name: name.clone(),
+                        visibility: Visibility::Private,
                         declaration_span: Some(parameter.name),
                         kind: SymbolKind::Parameter,
                         type_: parameter_type.clone(),
@@ -811,6 +809,7 @@ impl Elaborator<'_> {
                 let symbol_id = self.symbols.insert(Symbol {
                     name: name.clone(),
                     declaration_span: Some(binding.name),
+                    visibility: Visibility::Private,
                     kind: SymbolKind::Local {
                         mutable: binding.mutable,
                     },
@@ -1382,6 +1381,7 @@ impl Elaborator<'_> {
             let symbol = self.symbols.insert(Symbol {
                 name: name.clone(),
                 declaration_span: Some(parameter.name),
+                visibility: Visibility::Private,
                 kind: SymbolKind::ComptimeParameter,
                 type_,
             });
@@ -1432,6 +1432,7 @@ impl Elaborator<'_> {
             let symbol = self.symbols.insert(Symbol {
                 name: name.clone(),
                 declaration_span: Some(parameter.name),
+                visibility: Visibility::Private,
                 kind: SymbolKind::Parameter,
                 type_: type_.clone(),
             });
@@ -1673,7 +1674,8 @@ impl Elaborator<'_> {
         let symbol = self.symbols.insert(Symbol {
             name: link_name.to_owned(),
             declaration_span: Some(declaration_span),
-
+            visibility: Visibility::Private,
+            
             kind: SymbolKind::ExternFunction {
                 abi,
                 link_name: link_name.to_owned()

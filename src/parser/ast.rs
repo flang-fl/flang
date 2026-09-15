@@ -8,6 +8,7 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub struct Item {
     pub span: Span,
+    pub visibility: Visibility,
     pub data: ItemData,
 }
 
@@ -184,4 +185,10 @@ pub struct While {
 pub enum ElseBranch {
     ElseIf(Box<Statement>),
     Else(Block),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Private,
+    Public,
 }

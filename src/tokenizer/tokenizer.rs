@@ -136,6 +136,7 @@ impl<'src> Tokenizer<'src> {
             "if" => TokenKind::If,
             "let" => TokenKind::Let,
             "mut" => TokenKind::Mut,
+            "pub" => TokenKind::Pub,
             "else" => TokenKind::Else,
             "comp" => TokenKind::Comp,
             "true" => TokenKind::True,

@@ -1,11 +1,7 @@
 use std::fmt::Debug;
 use crate::diagnostics::Diagnostic;
 use crate::parser::ast::Phase::Comptime;
-use crate::parser::ast::{
-    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
-    Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression,
-    TypeExpressionData, UnaryOperator, While,
-};
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Item, ItemData, Parameter, Phase, Program, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While};
 use crate::source::{SourceFile, Span};
 use crate::tokenizer::{Token, TokenKind};
 
@@ -60,7 +56,23 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
     }
 
     fn parse_item(&mut self) -> Option<Item> {
+        let public_prefix = if self.peek_is(TokenKind::Pub) {
+            Some(self.expect(TokenKind::Pub, "Expected `pub`")?)
+        } else {
+            None
+        };
+
+        let visibility = if public_prefix.is_some() {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
+
         let comp = self.expect(TokenKind::Comp, "Expected `comp` at top-level Declaration")?;
+
+        let start = public_prefix
+            .map(|token| token.span)
+            .unwrap_or(comp.span);
 
         let identifier = self.expect(
             TokenKind::Identifier,
@@ -74,7 +86,8 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         let semi = self.expect(TokenKind::Semi, "expected `;` after binding")?;
 
         Some(Item {
-            span: self.source.fromto(comp.span, semi.span),
+            span: self.source.fromto(start, semi.span),
+            visibility,
             data: ItemData::Binding(Binding {
                 name: identifier.span,
                 expression,

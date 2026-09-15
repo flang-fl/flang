@@ -1,10 +1,15 @@
 use crate::TargetInfo;
-use crate::comptime::{ComptimeValue, FunctionId, FunctionStore, FunctionTemplateStore, ValueStore};
+use crate::comptime::{
+    ComptimeValue, FunctionId, FunctionStore, FunctionTemplateStore, ValueStore,
+};
 use crate::diagnostics::Diagnostic;
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
-use crate::parser::ast::{ItemData, Program};
+use crate::parser::ast::{ItemData, Program, Visibility};
 use crate::semantic::hir::{HirBinding, HirProgram};
-use crate::semantic::symbols::{Environment, ExternAbi, Module, ModuleId, ModuleStore, Symbol, SymbolId, SymbolKind, SymbolTable};
+use crate::semantic::symbols::{
+    Environment, ExternAbi, Module, ModuleId, ModuleStore, Symbol, SymbolId, SymbolKind,
+    SymbolTable,
+};
 use crate::semantic::types::{IntegerType, SpecializationKey, Type};
 use crate::source::{SourceFileManager, SourceId};
 use std::collections::{HashMap, HashSet};
@@ -25,27 +30,23 @@ pub struct ElaboratedProgram {
 pub struct Elaborator<'src> {
     target: TargetInfo,
     pub(super) sources: &'src SourceFileManager,
-    
+
     pub(super) symbols: SymbolTable,
     pub(super) environment: Environment,
     pub(super) diagnostics: Vec<Diagnostic>,
-    
-    pub(super) pending_bindings:
-        HashMap<SymbolId, PendingBinding>,
-    
+
+    pub(super) pending_bindings: HashMap<SymbolId, PendingBinding>,
+
     pub(super) binding_order: Vec<SymbolId>,
-    
-    pub(super) elaboration_status:
-        HashMap<SymbolId, WorkStatus>,
-    
-    pub(super) elaborated_bindings:
-        HashMap<SymbolId, HirBinding>,
-    
+
+    pub(super) elaboration_status: HashMap<SymbolId, WorkStatus>,
+
+    pub(super) elaborated_bindings: HashMap<SymbolId, HirBinding>,
+
     pub(super) elaboration_stack: Vec<SymbolId>,
-    
-    pub(super) evaluation_status:
-        HashMap<SymbolId, WorkStatus>,
-    
+
+    pub(super) evaluation_status: HashMap<SymbolId, WorkStatus>,
+
     pub(super) evaluation_stack: Vec<SymbolId>,
 
     pub(super) entry_module: ModuleId,
@@ -56,8 +57,7 @@ pub struct Elaborator<'src> {
     pub(super) specializations: HashMap<SpecializationKey, FunctionId>,
     pub(super) active_specializations: HashSet<SpecializationKey>,
 
-    pub(super) frames:
-        Vec<HashMap<SymbolId, ComptimeValue>>
+    pub(super) frames: Vec<HashMap<SymbolId, ComptimeValue>>,
 }
 
 impl<'src> Elaborator<'src> {
@@ -81,8 +81,9 @@ impl<'src> Elaborator<'src> {
             let symbol_id = symbols.insert(Symbol {
                 name: name.to_owned(),
                 kind: SymbolKind::BuiltinType(Type::Integer(integer_type)),
+                visibility: Visibility::Private,
                 declaration_span: None,
-                type_: Type::Type
+                type_: Type::Type,
             });
 
             environment.define(name.to_owned(), symbol_id);
@@ -91,8 +92,9 @@ impl<'src> Elaborator<'src> {
         let type_id = symbols.insert(Symbol {
             name: "type".to_owned(),
             kind: SymbolKind::BuiltinType(Type::Type),
+            visibility: Visibility::Private,
             declaration_span: None,
-            type_: Type::Type
+            type_: Type::Type,
         });
 
         environment.define("type".to_owned(), type_id);
@@ -100,15 +102,17 @@ impl<'src> Elaborator<'src> {
         let str_id = symbols.insert(Symbol {
             name: "str".to_owned(),
             kind: SymbolKind::BuiltinType(Type::Str),
+            visibility: Visibility::Private,
             declaration_span: None,
-            type_: Type::Type
+            type_: Type::Type,
         });
-        
+
         environment.define("str".to_owned(), str_id);
-        
+
         let unit_id = symbols.insert(Symbol {
             name: "unit".to_owned(),
             kind: SymbolKind::BuiltinType(Type::Unit),
+            visibility: Visibility::Private,
             declaration_span: None,
             type_: Type::Type,
         });
@@ -118,6 +122,7 @@ impl<'src> Elaborator<'src> {
         let bool_id = symbols.insert(Symbol {
             name: "bool".to_owned(),
             kind: SymbolKind::BuiltinType(Type::Bool),
+            visibility: Visibility::Private,
             declaration_span: None,
             type_: Type::Type,
         });
@@ -166,7 +171,7 @@ impl<'src> Elaborator<'src> {
         let mut modules = ModuleStore::new();
         let entry_module = modules.insert(Module {
             source: entry,
-            scope: module_scope
+            scope: module_scope,
         });
 
         Self {
@@ -175,14 +180,14 @@ impl<'src> Elaborator<'src> {
             symbols,
             environment,
             diagnostics: Vec::new(),
-            
+
             pending_bindings: HashMap::new(),
             binding_order: Vec::new(),
-            
+
             elaboration_status: HashMap::new(),
             elaborated_bindings: HashMap::new(),
             elaboration_stack: Vec::new(),
-            
+
             evaluation_status: HashMap::new(),
             evaluation_stack: Vec::new(),
 
@@ -210,7 +215,11 @@ impl<'src> Elaborator<'src> {
 
         let symbol = Symbol {
             name: name.clone(),
-            kind: SymbolKind::ExternFunction { link_name, abi: ExternAbi::C },
+            kind: SymbolKind::ExternFunction {
+                link_name,
+                abi: ExternAbi::C,
+            },
+            visibility: Visibility::Private,
             declaration_span: None,
             type_: Type::Function {
                 parameters,
@@ -221,29 +230,23 @@ impl<'src> Elaborator<'src> {
         let symbol_id = symbols.insert(symbol);
         environment.define(name, symbol_id);
     }
-    
-    pub fn elaborate(
-        mut self,
-        program: Program
-    ) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
+
+    pub fn elaborate(mut self, program: Program) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
         self.collect_declarations(self.entry_module, program);
-        
+
         let order = self.binding_order.clone();
-        
+
         for symbol in &order {
             let _ = self.ensure_binding_evaluated(*symbol);
         }
-        
+
         if !self.diagnostics.is_empty() {
             return Err(self.diagnostics);
         }
-        
+
         let bindings = order
             .iter()
-            .filter_map(|symbol| {
-                self.elaborated_bindings
-                    .get(symbol).cloned()
-            })
+            .filter_map(|symbol| self.elaborated_bindings.get(symbol).cloned())
             .collect();
 
         let entry_scope = self.modules.get(self.entry_module).scope;
@@ -258,19 +261,13 @@ impl<'src> Elaborator<'src> {
         })
     }
 
-    fn collect_declarations(
-        &mut self,
-        module: ModuleId,
-        program: Program,
-    ) {
+    fn collect_declarations(&mut self, module: ModuleId, program: Program) {
         let scope = self.modules.get(module).scope;
         let previous_scope = self.environment.switch_scope(scope);
         for item in program.items {
             let ItemData::Binding(binding) = item.data;
-            
-            let name = self.sources
-                .span_text(binding.name)
-                .to_owned();
+
+            let name = self.sources.span_text(binding.name).to_owned();
 
             if let Some(_) = self.environment.lookup(&name) {
                 self.diagnostics.push(Diagnostic::error(
@@ -281,40 +278,37 @@ impl<'src> Elaborator<'src> {
 
                 continue;
             }
-            
+
             let symbol = Symbol {
                 name: name.clone(),
                 declaration_span: Some(binding.name),
+                visibility: item.visibility,
                 kind: SymbolKind::Binding {
                     phase: binding.phase,
-                    mutable: binding.mutable
+                    mutable: binding.mutable,
                 },
-                type_: Type::Unknown
+                type_: Type::Unknown,
             };
-            
+
             let symbol_id = self.symbols.insert(symbol);
             self.environment.define(name, symbol_id);
-            
+
             self.pending_bindings.insert(
                 symbol_id,
                 PendingBinding {
                     binding,
                     span: item.span,
-                    defining_scope: self.environment.current_scope()
-                }
+                    defining_scope: self.environment.current_scope(),
+                },
             );
-            
+
             self.binding_order.push(symbol_id);
-            
-            self.elaboration_status.insert(
-                symbol_id,
-                WorkStatus::Pending
-            );
-            
-            self.evaluation_status.insert(
-                symbol_id,
-                WorkStatus::Pending
-            );
+
+            self.elaboration_status
+                .insert(symbol_id, WorkStatus::Pending);
+
+            self.evaluation_status
+                .insert(symbol_id, WorkStatus::Pending);
         }
         self.environment.switch_scope(previous_scope);
     }
@@ -353,8 +347,7 @@ mod tests {
         let program_a = parse(source_a);
         let program_b = parse(source_b);
 
-        let mut elaborator =
-            Elaborator::new(&sources, source_a, TargetInfo::native());
+        let mut elaborator = Elaborator::new(&sources, source_a, TargetInfo::native());
 
         let module_a = elaborator.entry_module;
         let scope_a = elaborator.modules.get(module_a).scope;
@@ -412,20 +405,20 @@ mod tests {
         );
 
         assert_eq!(
-              value_a.expect("A's answer should evaluate"),
-              ComptimeValue::Integer {
-                  value: 10,
-                  type_: IntegerType::I64,
-              },
-          );
+            value_a.expect("A's answer should evaluate"),
+            ComptimeValue::Integer {
+                value: 10,
+                type_: IntegerType::I64,
+            },
+        );
 
         assert_eq!(
-              value_b.expect("B's answer should evaluate"),
-              ComptimeValue::Integer {
-                  value: 20,
-                  type_: IntegerType::I64,
-              },
-          );
+            value_b.expect("B's answer should evaluate"),
+            ComptimeValue::Integer {
+                value: 20,
+                type_: IntegerType::I64,
+            },
+        );
     }
 
     #[test]
@@ -440,7 +433,7 @@ mod tests {
               return helper + n;
           };
           "#
-                .into(),
+            .into(),
         );
 
         let source_b = sources.add_file(
@@ -449,7 +442,7 @@ mod tests {
           comp helper = 2;
           comp answer = imported_add<helper>();
           "#
-                .into(),
+            .into(),
         );
 
         let parse = |id| {
@@ -466,8 +459,7 @@ mod tests {
         let program_a = parse(source_a);
         let program_b = parse(source_b);
 
-        let mut elaborator =
-            Elaborator::new(&sources, source_a, TargetInfo::native());
+        let mut elaborator = Elaborator::new(&sources, source_a, TargetInfo::native());
 
         let module_a = elaborator.entry_module;
         let scope_a = elaborator.modules.get(module_a).scope;
@@ -509,13 +501,72 @@ mod tests {
         );
 
         assert_eq!(
-          result.expect("answer should evaluate"),
-          ComptimeValue::Integer {
-              value: 42,
-              type_: IntegerType::I64,
-          },
-      );
+            result.expect("answer should evaluate"),
+            ComptimeValue::Integer {
+                value: 42,
+                type_: IntegerType::I64,
+            },
+        );
 
         assert_eq!(elaborator.environment.current_scope(), scope_b);
+    }
+
+    #[test]
+    fn declarations_retain_visibility() {
+        use crate::parser::ast::Visibility;
+
+        let mut sources = SourceFileManager::new();
+        let entry = sources.add_file(
+            "main.fl".into(),
+            "pub comp answer = 42; comp helper = 10;".into(),
+        );
+
+        let source = sources.get_file(entry);
+        let tokens = Tokenizer::new(source)
+            .tokenize()
+            .expect("tokenization should succeed");
+
+        let program = Parser::new(source, &tokens)
+            .parse()
+            .expect("parsing should succeed");
+
+        assert_eq!(program.items[0].visibility, Visibility::Public);
+        assert_eq!(program.items[1].visibility, Visibility::Private);
+        assert_eq!(
+            source.span_text(program.items[0].span),
+            "pub comp answer = 42;",
+        );
+
+        let mut elaborator = Elaborator::new(&sources, entry, TargetInfo::native());
+
+        let module = elaborator.entry_module;
+        let scope = elaborator.modules.get(module).scope;
+
+        elaborator.collect_declarations(module, program);
+
+        assert!(
+            elaborator.diagnostics.is_empty(),
+            "{:#?}",
+            elaborator.diagnostics,
+        );
+
+        let answer = elaborator
+            .environment
+            .lookup_in(scope, "answer")
+            .expect("answer should exist");
+
+        let helper = elaborator
+            .environment
+            .lookup_in(scope, "helper")
+            .expect("helper should exist");
+
+        assert_eq!(
+            elaborator.symbols.get(answer).visibility,
+            Visibility::Public,
+        );
+        assert_eq!(
+            elaborator.symbols.get(helper).visibility,
+            Visibility::Private,
+        );
     }
 }
