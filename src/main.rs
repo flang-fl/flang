@@ -16,6 +16,7 @@ pub mod source;
 pub mod tokenizer;
 mod toolchain;
 mod elaboration;
+pub mod util;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TargetInfo {
@@ -163,7 +164,7 @@ fn compile(sources: &SourceFileManager, entry: SourceId, target: TargetInfo) -> 
 
 
     let (program_result, elaboration_time) = measure(|| {
-        Elaborator::new(sources, target).elaborate(ast)
+        Elaborator::new(sources, entry, target).elaborate(ast)
     });
 
     let elaborated = program_result?;

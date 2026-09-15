@@ -4,9 +4,9 @@ use crate::diagnostics::Diagnostic;
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
 use crate::parser::ast::{ItemData, Program};
 use crate::semantic::hir::{HirBinding, HirProgram};
-use crate::semantic::symbols::{Environment, ExternAbi, Symbol, SymbolId, SymbolKind, SymbolTable};
+use crate::semantic::symbols::{Environment, ExternAbi, Module, ModuleId, ModuleStore, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::{IntegerType, SpecializationKey, Type};
-use crate::source::SourceFileManager;
+use crate::source::{SourceFileManager, SourceId};
 use std::collections::{HashMap, HashSet};
 
 mod analysis;
@@ -46,7 +46,9 @@ pub struct Elaborator<'src> {
         HashMap<SymbolId, WorkStatus>,
     
     pub(super) evaluation_stack: Vec<SymbolId>,
-    
+
+    pub(super) entry_module: ModuleId,
+    pub(super) modules: ModuleStore,
     pub(super) values: ValueStore,
     pub(super) functions: FunctionStore,
     pub(super) function_templates: FunctionTemplateStore,
@@ -58,7 +60,7 @@ pub struct Elaborator<'src> {
 }
 
 impl<'src> Elaborator<'src> {
-    pub fn new(sources: &'src SourceFileManager, target: TargetInfo) -> Self {
+    pub fn new(sources: &'src SourceFileManager, entry: SourceId, target: TargetInfo) -> Self {
         let mut symbols = SymbolTable::new();
         let mut environment = Environment::new();
 
@@ -156,7 +158,16 @@ impl<'src> Elaborator<'src> {
             vec![Type::Integer(IntegerType::I64)],
             Type::Unit,
         );
-        
+
+        environment.push_scope();
+        let module_scope = environment.current_scope();
+
+        let mut modules = ModuleStore::new();
+        let entry_module = modules.insert(Module {
+            source: entry,
+            scope: module_scope
+        });
+
         Self {
             target,
             sources,
@@ -173,7 +184,9 @@ impl<'src> Elaborator<'src> {
             
             evaluation_status: HashMap::new(),
             evaluation_stack: Vec::new(),
-            
+
+            entry_module,
+            modules,
             values: ValueStore::new(),
             functions: FunctionStore::new(),
             function_templates: FunctionTemplateStore::new(),
