@@ -879,6 +879,88 @@ The exact pipeline is open, but the language should avoid unconstrained mutation
 
 The compiler may need to act more like an incremental interpreter + typechecker + semantic program database than a simple one-way compiler pipeline.
 
+### 15.1 Workspaces and explicit build hooks
+
+The preferred direction is to expose isolated compilation contexts (workspaces)
+and typed compiler results to programs written in the language. Jai-style
+compiler messages are an inspiration, but the exact API and whether a raw
+message loop is exposed remain open. This is pending design, not an implemented
+feature.
+
+Build participation should be explicit. Importing a library does not
+automatically install its checks or hooks. The build function imports the
+library and explicitly calls an entry point such as
+`lib.build_hook(build_context)`. Hook names and signatures are illustrative.
+
+For checks and reports concerning one program, a workspace-scoped context is
+preferred so hooks do not accidentally apply to unrelated tools or other build
+outputs. A broader build context may eventually support coordinating multiple
+workspaces; the exact context API remains open.
+
+Registration happens before an explicit compilation-start boundary. Adding
+sources or installing a hook should not silently start compilation and cause
+other hooks to miss results. Installation registers participation in later
+stages; it need not perform the analysis immediately.
+
+### 15.2 Read-only observers first
+
+The initial scope is compiler observation, diagnostics, and reports. Program
+modification through build hooks is deferred and should be designed as a
+separate transformation mechanism. Simple method derivation can use an ordinary
+compile-time function returning implementation evidence; it does not itself
+justify a compiler message loop.
+
+Motivating observer uses include:
+
+- Enforcing project-specific standards using resolved declarations, types, and
+  other semantic information, with diagnostics attached to source locations.
+- Reporting the largest emitted functions in bytes.
+- Attributing emitted code to source functions and their compile-time
+  specializations, including aggregate specialization size.
+- Comparing reports across build configurations or enforcing project budgets.
+
+Observers may inspect their defined compiler results, maintain their own
+analysis state, write reports, and emit diagnostics that fail the build. They
+cannot modify program entities, add sources, register implementation evidence,
+or change compilation options. A checker that detects missing evidence reports
+the problem rather than silently supplying evidence. Passing a user-written
+check does not by itself establish proof evidence trusted by the compiler.
+
+### 15.3 Stable results and stage boundaries
+
+Modification should precede publication of results that it could invalidate,
+rather than precede all read-only inspection. A future transformation may need
+to inspect resolved field types before generating declarations. Inspection
+within a transformation is distinct from observing stable compiler results.
+
+A conceptual observer lifecycle is:
+
+```text
+configure workspace and register hooks
+    -> compile and establish stable semantic results
+    -> semantic observers (project rules, API checks)
+    -> generate machine code
+    -> code-generation observers (function-size reports)
+    -> finish build
+```
+
+Stability is specific to the published result. Semantic information may be
+available before emitted-code information; a single universal "program ready"
+event is insufficient. Exact stages, result lifetimes, completeness guarantees,
+and behavior after compilation errors remain open.
+
+Code-size reports must identify what they measure, including the target and
+build configuration. Emitted function size and final linked contribution are
+different measurements. Attribution through specialization, inlining, and
+linking needs an explicit API contract.
+
+The preferred composition model delivers relevant results to every registered
+observer, rather than having independent libraries compete to consume a shared
+message queue. A dispatcher or standard-library helper may own any low-level
+message loop. Observer conclusions should not depend on registration order or
+compiler worker completion order. Exact dispatch, aggregation, and ordering
+guarantees remain to be designed.
+
 ---
 
 ## 16. Compile-time effects and reproducibility
