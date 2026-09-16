@@ -728,7 +728,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                         },
                     })
                 } else {
-                    let semi = self.expect(TokenKind::Semi, "Expected `;` after assignment")?;
+                    let semi = self.expect(TokenKind::Semi, "Expected `;` after statement expression")?;
 
                     Some(Statement {
                         span: self.source.fromto(target_or_expression.span, semi.span),
@@ -737,7 +737,24 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 }
             }
 
-            _ => None,
+            _ => {
+                self.diagnostics.push(Diagnostic::error(
+                    "Unexpected start of Statement",
+                    match self.peek() {
+                        Some(token) => token.span,
+                        None => self.source.eof_span()
+                    },
+                    format!(
+                        "`{}` is not a valid statement starter",
+                        match self.peek() {
+                            Some(token) => token.kind.display(),
+                            None => "EOF"
+                        }
+                    )
+                ));
+
+                None
+            },
         }
     }
 

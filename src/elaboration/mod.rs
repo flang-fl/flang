@@ -4,9 +4,9 @@ use crate::diagnostics::Diagnostic;
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
 use crate::parser::ast::{ItemData, Program};
 use crate::semantic::hir::{HirBinding, HirProgram};
-use crate::semantic::symbols::{Environment, ExternAbi, Symbol, SymbolId, SymbolKind, SymbolTable};
+use crate::semantic::symbols::{Environment, ExternAbi, Module, ModuleId, ModuleStore, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::{IntegerType, SpecializationKey, Type};
-use crate::source::SourceFileManager;
+use crate::source::{SourceFileManager, SourceId};
 use std::collections::{HashMap, HashSet};
 
 mod analysis;
@@ -18,7 +18,8 @@ pub struct ElaboratedProgram {
     pub symbols: SymbolTable,
     pub values: ValueStore,
     pub functions: FunctionStore,
-    pub hir: HirProgram
+    pub hir: HirProgram,
+    pub entry_symbol: Option<SymbolId>,
 }
 
 pub struct Elaborator<'src> {
@@ -46,7 +47,9 @@ pub struct Elaborator<'src> {
         HashMap<SymbolId, WorkStatus>,
     
     pub(super) evaluation_stack: Vec<SymbolId>,
-    
+
+    pub(super) entry_module: ModuleId,
+    pub(super) modules: ModuleStore,
     pub(super) values: ValueStore,
     pub(super) functions: FunctionStore,
     pub(super) function_templates: FunctionTemplateStore,
@@ -58,7 +61,7 @@ pub struct Elaborator<'src> {
 }
 
 impl<'src> Elaborator<'src> {
-    pub fn new(sources: &'src SourceFileManager, target: TargetInfo) -> Self {
+    pub fn new(sources: &'src SourceFileManager, entry: SourceId, target: TargetInfo) -> Self {
         let mut symbols = SymbolTable::new();
         let mut environment = Environment::new();
 
@@ -156,7 +159,16 @@ impl<'src> Elaborator<'src> {
             vec![Type::Integer(IntegerType::I64)],
             Type::Unit,
         );
-        
+
+        environment.push_scope();
+        let module_scope = environment.current_scope();
+
+        let mut modules = ModuleStore::new();
+        let entry_module = modules.insert(Module {
+            source: entry,
+            scope: module_scope
+        });
+
         Self {
             target,
             sources,
@@ -173,7 +185,9 @@ impl<'src> Elaborator<'src> {
             
             evaluation_status: HashMap::new(),
             evaluation_stack: Vec::new(),
-            
+
+            entry_module,
+            modules,
             values: ValueStore::new(),
             functions: FunctionStore::new(),
             function_templates: FunctionTemplateStore::new(),
@@ -212,7 +226,7 @@ impl<'src> Elaborator<'src> {
         mut self,
         program: Program
     ) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
-        self.collect_declarations(program);
+        self.collect_declarations(self.entry_module, program);
         
         let order = self.binding_order.clone();
         
@@ -231,19 +245,26 @@ impl<'src> Elaborator<'src> {
                     .get(symbol).cloned()
             })
             .collect();
-        
+
+        let entry_scope = self.modules.get(self.entry_module).scope;
+        let entry_symbol = self.environment.lookup_in(entry_scope, "main");
+
         Ok(ElaboratedProgram {
             hir: HirProgram { bindings },
             symbols: self.symbols,
             values: self.values,
-            functions: self.functions
+            functions: self.functions,
+            entry_symbol,
         })
     }
 
     fn collect_declarations(
         &mut self,
-        program: Program
+        module: ModuleId,
+        program: Program,
     ) {
+        let scope = self.modules.get(module).scope;
+        let previous_scope = self.environment.switch_scope(scope);
         for item in program.items {
             let ItemData::Binding(binding) = item.data;
             
@@ -278,7 +299,8 @@ impl<'src> Elaborator<'src> {
                 symbol_id,
                 PendingBinding {
                     binding,
-                    span: item.span
+                    span: item.span,
+                    defining_scope: self.environment.current_scope()
                 }
             );
             
@@ -294,5 +316,206 @@ impl<'src> Elaborator<'src> {
                 WorkStatus::Pending
             );
         }
+        self.environment.switch_scope(previous_scope);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Parser;
+    use crate::tokenizer::Tokenizer;
+
+    #[test]
+    fn module_bindings_resolve_in_their_defining_scope() {
+        let mut sources = SourceFileManager::new();
+
+        let source_a = sources.add_file(
+            "a.fl".into(),
+            "comp answer = helper; comp helper = 10;".into(),
+        );
+        let source_b = sources.add_file(
+            "b.fl".into(),
+            "comp answer = helper; comp helper = 20;".into(),
+        );
+
+        let parse = |id| {
+            let source = sources.get_file(id);
+            let tokens = Tokenizer::new(source)
+                .tokenize()
+                .expect("tokenization should succeed");
+
+            Parser::new(source, &tokens)
+                .parse()
+                .expect("parsing should succeed")
+        };
+
+        let program_a = parse(source_a);
+        let program_b = parse(source_b);
+
+        let mut elaborator =
+            Elaborator::new(&sources, source_a, TargetInfo::native());
+
+        let module_a = elaborator.entry_module;
+        let scope_a = elaborator.modules.get(module_a).scope;
+
+        // Leave A for built-ins, then create its sibling B.
+        elaborator.environment.pop_scope();
+        elaborator.environment.push_scope();
+
+        let scope_b = elaborator.environment.current_scope();
+        let module_b = elaborator.modules.insert(Module {
+            source: source_b,
+            scope: scope_b,
+        });
+
+        // Collect A while B is current.
+        elaborator.collect_declarations(module_a, program_a);
+        assert_eq!(elaborator.environment.current_scope(), scope_b);
+
+        // Collect B while A is current.
+        elaborator.environment.switch_scope(scope_a);
+        elaborator.collect_declarations(module_b, program_b);
+        assert_eq!(elaborator.environment.current_scope(), scope_a);
+
+        assert!(
+            elaborator.diagnostics.is_empty(),
+            "{:#?}",
+            elaborator.diagnostics,
+        );
+
+        let answer_a = elaborator
+            .environment
+            .lookup_in(scope_a, "answer")
+            .expect("A should define answer");
+
+        let answer_b = elaborator
+            .environment
+            .lookup_in(scope_b, "answer")
+            .expect("B should define answer");
+
+        assert_ne!(answer_a, answer_b);
+
+        // Evaluate each binding while the OTHER module is current.
+        elaborator.environment.switch_scope(scope_b);
+        let value_a = elaborator.ensure_binding_evaluated(answer_a);
+        assert_eq!(elaborator.environment.current_scope(), scope_b);
+
+        elaborator.environment.switch_scope(scope_a);
+        let value_b = elaborator.ensure_binding_evaluated(answer_b);
+        assert_eq!(elaborator.environment.current_scope(), scope_a);
+
+        assert!(
+            elaborator.diagnostics.is_empty(),
+            "{:#?}",
+            elaborator.diagnostics,
+        );
+
+        assert_eq!(
+              value_a.expect("A's answer should evaluate"),
+              ComptimeValue::Integer {
+                  value: 10,
+                  type_: IntegerType::I64,
+              },
+          );
+
+        assert_eq!(
+              value_b.expect("B's answer should evaluate"),
+              ComptimeValue::Integer {
+                  value: 20,
+                  type_: IntegerType::I64,
+              },
+          );
+    }
+
+    #[test]
+    fn imported_template_uses_its_defining_scope() {
+        let mut sources = SourceFileManager::new();
+
+        let source_a = sources.add_file(
+            "a.fl".into(),
+            r#"
+          comp helper = 40;
+          comp add = fn<n: i64>() -> i64 {
+              return helper + n;
+          };
+          "#
+                .into(),
+        );
+
+        let source_b = sources.add_file(
+            "b.fl".into(),
+            r#"
+          comp helper = 2;
+          comp answer = imported_add<helper>();
+          "#
+                .into(),
+        );
+
+        let parse = |id| {
+            let source = sources.get_file(id);
+            let tokens = Tokenizer::new(source)
+                .tokenize()
+                .expect("tokenization should succeed");
+
+            Parser::new(source, &tokens)
+                .parse()
+                .expect("parsing should succeed")
+        };
+
+        let program_a = parse(source_a);
+        let program_b = parse(source_b);
+
+        let mut elaborator =
+            Elaborator::new(&sources, source_a, TargetInfo::native());
+
+        let module_a = elaborator.entry_module;
+        let scope_a = elaborator.modules.get(module_a).scope;
+
+        // Create B as a sibling of A beneath built-ins.
+        elaborator.environment.pop_scope();
+        elaborator.environment.push_scope();
+
+        let scope_b = elaborator.environment.current_scope();
+        let module_b = elaborator.modules.insert(Module {
+            source: source_b,
+            scope: scope_b,
+        });
+
+        elaborator.collect_declarations(module_a, program_a);
+
+        // Simulate importing A.add into B by sharing its symbol ID.
+        let add = elaborator
+            .environment
+            .lookup_in(scope_a, "add")
+            .expect("A should define add");
+
+        elaborator.environment.switch_scope(scope_b);
+        elaborator.environment.define("imported_add".into(), add);
+
+        elaborator.collect_declarations(module_b, program_b);
+
+        let answer = elaborator
+            .environment
+            .lookup_in(scope_b, "answer")
+            .expect("B should define answer");
+
+        let result = elaborator.ensure_binding_evaluated(answer);
+
+        assert!(
+            elaborator.diagnostics.is_empty(),
+            "{:#?}",
+            elaborator.diagnostics,
+        );
+
+        assert_eq!(
+          result.expect("answer should evaluate"),
+          ComptimeValue::Integer {
+              value: 42,
+              type_: IntegerType::I64,
+          },
+      );
+
+        assert_eq!(elaborator.environment.current_scope(), scope_b);
     }
 }

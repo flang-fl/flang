@@ -3,7 +3,7 @@ use crate::diagnostics::Diagnostic;
 use crate::elaboration::Elaborator;
 use crate::parser::ast::{Binding, Phase};
 use crate::semantic::hir::HirBinding;
-use crate::semantic::symbols::{SymbolId, SymbolKind};
+use crate::semantic::symbols::{ScopeId, SymbolId, SymbolKind};
 use crate::source::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +17,8 @@ pub(super) enum WorkStatus {
 #[derive(Debug, Clone)]
 pub(super) struct PendingBinding {
     pub binding: Binding,
-    pub span: Span
+    pub span: Span,
+    pub defining_scope: ScopeId,
 }
 
 impl Elaborator<'_> {
@@ -61,11 +62,15 @@ impl Elaborator<'_> {
             .cloned()
             .ok_or(())?;
 
+        let previous_scope = self.environment.switch_scope(pending.defining_scope);
+
         let result = self.analyze_binding(
             &pending.binding,
             pending.span,
             symbol,
         );
+
+        self.environment.switch_scope(previous_scope);
 
         let popped = self.elaboration_stack.pop();
         debug_assert_eq!(popped, Some(symbol));

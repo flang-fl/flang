@@ -1,0 +1,12 @@
+comp identity = fn<n: i64>() -> i64 {
+  return n;
+};
+
+comp caller = fn<i64: bool>() -> unit {
+  print_i64(identity<42>());
+};
+
+comp main = fn() -> i64 {
+  caller<true>();
+  return 0;
+};
