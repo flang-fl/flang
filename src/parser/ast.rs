@@ -2,12 +2,13 @@ use crate::source::Span;
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub items: Vec<Item>
+    pub items: Vec<Item>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Item {
     pub span: Span,
+    pub visibility: Visibility,
     pub data: ItemData,
 }
 
@@ -28,13 +29,13 @@ pub struct Binding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Comptime,
-    Runtime
+    Runtime,
 }
 
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub span: Span,
-    pub data: ExpressionData
+    pub data: ExpressionData,
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +44,12 @@ pub enum ExpressionData {
     TypeValue(TypeExpression),
     /// @blabla
     Intrinsic {
-        name: Span
+        name: Span,
+    },
+    /// bla.member
+    Member {
+        base: Box<Expression>,
+        name: Span,
     },
     IntegerLiteral,
     StringLiteral,
@@ -60,7 +66,7 @@ pub enum ExpressionData {
     },
     Specialize {
         callee: Box<Expression>,
-        arguments: Vec<Expression>
+        arguments: Vec<Expression>,
     },
     Call {
         callee: Box<Expression>,
@@ -72,8 +78,8 @@ pub enum ExpressionData {
     },
     Index {
         base: Box<Expression>,
-        index: Box<Expression>
-    }
+        index: Box<Expression>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,8 +107,14 @@ impl BinaryOperator {
     pub fn requires_number_operands(self) -> bool {
         matches!(
             self,
-            Self::Add | Self::Subtract | Self::Multiply | Self::Divide |
-            Self::LessThanOrEqual | Self::GreaterThanOrEqual | Self::LessThan | Self::GreaterThan
+            Self::Add
+                | Self::Subtract
+                | Self::Multiply
+                | Self::Divide
+                | Self::LessThanOrEqual
+                | Self::GreaterThanOrEqual
+                | Self::LessThan
+                | Self::GreaterThan
         )
     }
 }
@@ -125,7 +137,7 @@ pub struct Parameter {
 #[derive(Debug, Clone)]
 pub struct TypeExpression {
     pub span: Span,
-    pub data: TypeExpressionData
+    pub data: TypeExpressionData,
 }
 
 #[derive(Debug, Clone)]
@@ -139,7 +151,7 @@ pub enum TypeExpressionData {
         return_type: Box<TypeExpression>,
         parameters: Vec<TypeExpression>,
     },
-    Unit
+    Unit,
 }
 
 #[derive(Debug, Clone)]
@@ -151,7 +163,7 @@ pub struct Block {
 #[derive(Debug, Clone)]
 pub struct Statement {
     pub span: Span,
-    pub data: StatementData
+    pub data: StatementData,
 }
 
 #[derive(Debug, Clone)]
@@ -171,7 +183,7 @@ pub enum StatementData {
 pub struct If {
     pub condition: Expression,
     pub then_block: Block,
-    pub else_: Option<ElseBranch>
+    pub else_: Option<ElseBranch>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,4 +196,10 @@ pub struct While {
 pub enum ElseBranch {
     ElseIf(Box<Statement>),
     Else(Block),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Private,
+    Public,
 }

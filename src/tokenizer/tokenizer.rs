@@ -136,6 +136,7 @@ impl<'src> Tokenizer<'src> {
             "if" => TokenKind::If,
             "let" => TokenKind::Let,
             "mut" => TokenKind::Mut,
+            "pub" => TokenKind::Pub,
             "else" => TokenKind::Else,
             "comp" => TokenKind::Comp,
             "true" => TokenKind::True,
@@ -214,6 +215,7 @@ impl<'src> Tokenizer<'src> {
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             '@' => TokenKind::At,
+            '.' => TokenKind::Dot,
 
             '+' => {
                 return self.single_or_double_tokens(

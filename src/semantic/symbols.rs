@@ -1,4 +1,4 @@
-use crate::parser::ast::Phase;
+use crate::parser::ast::{Phase, Visibility};
 use crate::semantic::types::Type;
 use crate::source::{SourceId, Span};
 use std::collections::HashMap;
@@ -168,6 +168,7 @@ pub struct Symbol {
     pub declaration_span: Option<Span>,
     pub kind: SymbolKind,
     pub type_: Type,
+    pub visibility: Visibility,
 }
 
 #[derive(Debug)]

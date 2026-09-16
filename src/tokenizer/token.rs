@@ -14,6 +14,7 @@ pub enum TokenKind {
     If,
     Let,
     Mut,
+    Pub,
     Else,
     Comp,
     True,
@@ -24,6 +25,7 @@ pub enum TokenKind {
     // Symbols
     At,                 // @
     Eq,                 // =
+    Dot,                // .
     EqEq,               // ==
     Semi,               // ;
     Plus,               // +
@@ -64,6 +66,7 @@ impl TokenKind {
             If => "if",
             Let => "let",
             Mut => "mut",
+            Pub => "pub",
             Else => "else",
             Comp => "comp",
             True => "true",
@@ -73,6 +76,7 @@ impl TokenKind {
 
             At => "@",
             Eq => "=",
+            Dot => ".",
             EqEq => "==",
             Semi => ";",
             Plus => "+",
