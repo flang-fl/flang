@@ -1,6 +1,6 @@
 use ariadne::Source;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct SourceId(pub usize);
 
 pub struct SourceFile {
@@ -9,7 +9,7 @@ pub struct SourceFile {
     pub source: Source,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Span {
     pub source: SourceId,
     pub start: usize,

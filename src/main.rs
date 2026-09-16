@@ -9,13 +9,14 @@ use std::{env, fs};
 
 mod comptime;
 pub mod diagnostics;
+mod elaboration;
+pub mod imports;
 mod llvm_inkwell;
 mod parser;
 mod semantic;
 pub mod source;
 pub mod tokenizer;
 mod toolchain;
-mod elaboration;
 pub mod util;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,21 +27,20 @@ struct TargetInfo {
 impl TargetInfo {
     pub fn native() -> TargetInfo {
         TargetInfo {
-            pointer_bit_width: usize::BITS
+            pointer_bit_width: usize::BITS,
         }
     }
 }
 
 struct CompilationTimings {
-    tokenize: Duration,
-    parse: Duration,
+    loading: Duration,
     elaboration: Duration,
     llvm_ir: Duration,
 }
 
 impl CompilationTimings {
     fn before_llvm(&self) -> Duration {
-        self.tokenize + self.parse + self.elaboration
+        self.loading + self.elaboration
     }
 
     fn compiler_total(&self) -> Duration {
@@ -67,7 +67,8 @@ fn main() {
         comp add = fn(a: i64, b: i64) -> i64 {
             return a + b;
         }
-        "#.to_owned()
+        "#
+        .to_owned(),
     );
 
     let entry = file_manager.add_file(
@@ -77,7 +78,7 @@ fn main() {
 
     let target_info = TargetInfo::native();
 
-    match compile(&file_manager, entry, target_info) {
+    match compile(&mut file_manager, entry, target_info) {
         Err(diagnostics) => {
             diagnostics.print_diagnostics(&mut file_manager);
 
@@ -110,8 +111,7 @@ fn main() {
                 Ok(()) => {
                     println!("built {}", executable_path.display());
 
-                    print_duration("Tokenization", timings.tokenize);
-                    print_duration("Parsing", timings.parse);
+                    print_duration("Loading & Parsing", timings.loading);
                     print_duration("Elaboration", timings.elaboration);
                     println!();
                     print_duration("Compilation", timings.before_llvm());
@@ -137,39 +137,22 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, Duration) {
     (result, started.elapsed())
 }
 
-fn compile(sources: &SourceFileManager, entry: SourceId, target: TargetInfo) -> Result<(String, CompilationTimings), Vec<Diagnostic>> {
-    let source = sources.get_file(entry);
+fn compile(
+    sources: &mut SourceFileManager,
+    entry: SourceId,
+    target: TargetInfo,
+) -> Result<(String, CompilationTimings), Vec<Diagnostic>> {
+    let (loaded, loading_time) = measure(|| imports::load_imports(sources, entry));
 
-    let (tokens, tokenize_time) = measure(|| {
-        let tokenizer = Tokenizer::new(source);
-        tokenizer.tokenize()
-    });
-    let tokens = tokens?;
+    let loaded = loaded?;
 
-    println!("=== Tokens");
-    for token in tokens.iter() {
-        println!("  {token:?}");
-    }
-    println!();
-
-    let (ast, parse_time) = measure(|| {
-        let parser = Parser::new(&source, &tokens);
-        parser.parse()
-    });
-    let ast = ast?;
-
-    println!("=== AST");
-    println!("{ast:#?}");
-    println!();
-
-
-    let (program_result, elaboration_time) = measure(|| {
-        Elaborator::new(sources, entry, target).elaborate(ast)
-    });
+    let (program_result, elaboration_time) =
+        measure(|| Elaborator::new(sources, entry, target).elaborate_loaded(loaded));
 
     let elaborated = program_result?;
 
     let (llvm_result, llvm_time) = measure(|| llvm_inkwell::emit(&elaborated, target));
+
     let llvm = llvm_result.map_err(|error| {
         vec![Diagnostic::error(
             error,
@@ -178,19 +161,14 @@ fn compile(sources: &SourceFileManager, entry: SourceId, target: TargetInfo) -> 
                 start: 0,
                 end: 0,
             },
-            ":(",
+            "LLVM generation failed",
         )]
     })?;
-
-    println!("=== LLVM");
-    println!("{llvm}");
-    println!();
 
     Ok((
         llvm,
         CompilationTimings {
-            tokenize: tokenize_time,
-            parse: parse_time,
+            loading: loading_time,
             elaboration: elaboration_time,
             llvm_ir: llvm_time,
         },
@@ -202,13 +180,20 @@ mod tests {
     use super::*;
 
     fn compile_text(text: &str) -> Result<String, Vec<Diagnostic>> {
+        let directory = tempfile::tempdir()
+            .expect("create test directory");
+
+        let path = directory.path().join("main.fl");
+        fs::write(&path, text).expect("write test source");
+
         let mut sources = SourceFileManager::new();
+        let entry = sources.add_file(
+            path.to_string_lossy().into_owned(),
+            text.to_owned(),
+        );
 
-        let id = sources.add_file("<test>".to_owned(), text.to_owned());
-
-        let result = compile(&sources, id, TargetInfo::native());
-
-        result.map(|(compile, _time)| compile)
+        compile(&mut sources, entry, TargetInfo::native())
+            .map(|(llvm, _)| llvm)
     }
 
     fn assert_compile_error(source: &str, expected: &str) {
@@ -545,7 +530,7 @@ mod tests {
                 return values[7];
             };
             "#,
-            0
+            0,
         )
     }
 
@@ -803,7 +788,7 @@ mod tests {
           };
           "#,
         )
-            .expect("extern function should compile");
+        .expect("extern function should compile");
 
         assert!(
             llvm.contains("declare i32 @putchar(i32)"),
@@ -832,7 +817,7 @@ mod tests {
           };
           "#,
         )
-            .expect("extern function with computed arguments should compile");
+        .expect("extern function with computed arguments should compile");
 
         assert!(
             llvm.contains("declare i32 @getchar()"),
@@ -942,5 +927,33 @@ mod tests {
           "#,
             "Member access requires a module",
         );
+    }
+
+    #[test]
+    fn compiles_program_with_file_import() {
+        let directory = tempfile::tempdir().expect("create test directory");
+
+        let entry_path = directory.path().join("main.fl");
+        let entry_text = r#"
+          comp library = @import("./library.fl");
+
+          comp main = fn() -> i64 {
+              return library.answer;
+          };
+      "#;
+
+        fs::write(&entry_path, entry_text).expect("write entry");
+
+        fs::write(directory.path().join("library.fl"), "pub comp answer = 42;")
+            .expect("write library");
+
+        let mut sources = SourceFileManager::new();
+        let entry = sources.add_file(entry_path.to_string_lossy().into_owned(), entry_text.into());
+
+        let (llvm, _) = compile(&mut sources, entry, TargetInfo::native())
+            .expect("importing program should compile");
+
+        assert_eq!(sources.files().len(), 2);
+        assert!(llvm.contains("ret i64 42"), "generated LLVM:\n{llvm}");
     }
 }

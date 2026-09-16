@@ -42,6 +42,9 @@ pub struct Expression {
 pub enum ExpressionData {
     Function(FunctionExpression),
     TypeValue(TypeExpression),
+    Import {
+        path: Span
+    },
     /// @blabla
     Intrinsic {
         name: Span,

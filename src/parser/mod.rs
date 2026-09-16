@@ -272,6 +272,39 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
 
         let span = self.source.fromto(callee.span, rparen.span);
 
+        if let ExpressionData::Intrinsic { name } = &callee.data {
+            if self.source.span_text(*name) == "import" {
+                if arguments.len() != 1 {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Invalid import arguments",
+                        span,
+                        "@import expects exactly one string literal",
+                    ));
+
+                    return None;
+                }
+
+                let argument = &arguments[0];
+
+                if !matches!(&argument.data, ExpressionData::StringLiteral) {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Import path must be a string literal",
+                        argument.span,
+                        "Computed import paths are not supported yet",
+                    ));
+
+                    return None;
+                }
+
+                return Some(Expression {
+                    span,
+                    data: ExpressionData::Import {
+                        path: argument.span,
+                    },
+                });
+            }
+        }
+
         Some(Expression {
             span,
             data: ExpressionData::Call {
@@ -1286,10 +1319,7 @@ mod tests {
         use crate::tokenizer::Tokenizer;
 
         let mut sources = SourceFileManager::new();
-        let id = sources.add_file(
-            "test.fl".into(),
-            "comp result = std.io.print(42);".into(),
-        );
+        let id = sources.add_file("test.fl".into(), "comp result = std.io.print(42);".into());
         let source = sources.get_file(id);
 
         let tokens = Tokenizer::new(source)
@@ -1302,9 +1332,7 @@ mod tests {
 
         let ItemData::Binding(binding) = &program.items[0].data;
 
-        let ExpressionData::Call { callee, arguments } =
-            &binding.expression.data
-        else {
+        let ExpressionData::Call { callee, arguments } = &binding.expression.data else {
             panic!("expected a call");
         };
 
@@ -1325,5 +1353,86 @@ mod tests {
         assert_eq!(source.span_text(*name), "io");
         assert!(matches!(&base.data, ExpressionData::Name));
         assert_eq!(source.span_text(base.span), "std");
+    }
+
+    #[test]
+    fn parses_literal_import() {
+        use crate::source::SourceFileManager;
+        use crate::tokenizer::Tokenizer;
+
+        let mut sources = SourceFileManager::new();
+        let id = sources.add_file(
+            "main.fl".into(),
+            r#"comp library = @import("./library.fl");"#.into(),
+        );
+
+        let source = sources.get_file(id);
+        let tokens = Tokenizer::new(source)
+            .tokenize()
+            .expect("tokenization should succeed");
+
+        let program = Parser::new(source, &tokens)
+            .parse()
+            .expect("parsing should succeed");
+
+        let ItemData::Binding(binding) = &program.items[0].data;
+
+        let ExpressionData::Import { path } = &binding.expression.data else {
+            panic!("expected an import expression");
+        };
+
+        assert_eq!(
+          source.span_text(*path),
+          r#""./library.fl""#,
+      );
+
+        assert_eq!(
+          source.span_text(binding.expression.span),
+          r#"@import("./library.fl")"#,
+      );
+    }
+
+    #[test]
+    fn rejects_invalid_import_arguments() {
+        use crate::source::SourceFileManager;
+        use crate::tokenizer::Tokenizer;
+
+        for (text, expected_message) in [
+            (
+                "comp library = @import();",
+                "Invalid import arguments",
+            ),
+            (
+                r#"comp library = @import("./a.fl", "./b.fl");"#,
+                "Invalid import arguments",
+            ),
+            (
+                "comp library = @import(path);",
+                "Import path must be a string literal",
+            ),
+            (
+                "comp library = @import(42);",
+                "Import path must be a string literal",
+            ),
+        ] {
+            let mut sources = SourceFileManager::new();
+            let id = sources.add_file("main.fl".into(), text.into());
+            let source = sources.get_file(id);
+
+            let tokens = Tokenizer::new(source)
+                .tokenize()
+                .expect("tokenization should succeed");
+
+            let diagnostics = Parser::new(source, &tokens)
+                .parse()
+                .expect_err("invalid import should be rejected");
+
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.message == expected_message
+                }),
+                "expected {expected_message:?} for {text:?}, got: {diagnostics:#?}",
+            );
+        }
     }
 }

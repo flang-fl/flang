@@ -174,6 +174,10 @@ impl Elaborator<'_> {
 
     pub(super) fn evaluate_expression(&mut self, expression: &HirExpression) -> ComptimeValue {
         match &expression.data {
+            HirExpressionData::Module(module) => {
+                ComptimeValue::Module(*module)
+            }
+
             HirExpressionData::TypeValue(type_) => {
                 ComptimeValue::Type(type_.clone())
             }

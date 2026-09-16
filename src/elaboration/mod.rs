@@ -7,12 +7,13 @@ use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
 use crate::parser::ast::{ItemData, Program, Visibility};
 use crate::semantic::hir::{HirBinding, HirProgram};
 use crate::semantic::symbols::{
-    Environment, ExternAbi, Module, ModuleId, ModuleStore, Symbol, SymbolId, SymbolKind,
+    Environment, ExternAbi, Module, ModuleId, ModuleStore, ScopeId, Symbol, SymbolId, SymbolKind,
     SymbolTable,
 };
 use crate::semantic::types::{IntegerType, SpecializationKey, Type};
-use crate::source::{SourceFileManager, SourceId};
+use crate::source::{SourceFileManager, SourceId, Span};
 use std::collections::{HashMap, HashSet};
+use crate::imports::LoadedProgram;
 
 mod analysis;
 mod dependencies;
@@ -58,6 +59,9 @@ pub struct Elaborator<'src> {
     pub(super) active_specializations: HashSet<SpecializationKey>,
 
     pub(super) frames: Vec<HashMap<SymbolId, ComptimeValue>>,
+
+    pub(super) builtin_scope: ScopeId,
+    pub(super) import_targets: HashMap<Span, ModuleId>,
 }
 
 impl<'src> Elaborator<'src> {
@@ -165,6 +169,8 @@ impl<'src> Elaborator<'src> {
             Type::Unit,
         );
 
+        let builtin_scope = environment.current_scope();
+
         environment.push_scope();
         let module_scope = environment.current_scope();
 
@@ -199,6 +205,9 @@ impl<'src> Elaborator<'src> {
             specializations: HashMap::new(),
             active_specializations: HashSet::new(),
             frames: Vec::new(),
+
+            builtin_scope,
+            import_targets: HashMap::new(),
         }
     }
 
@@ -231,9 +240,62 @@ impl<'src> Elaborator<'src> {
         environment.define(name, symbol_id);
     }
 
-    pub fn elaborate(mut self, program: Program) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
-        self.collect_declarations(self.entry_module, program);
+    pub fn elaborate_loaded(
+        mut self,
+        loaded: LoadedProgram
+    ) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
+        let mut source_modules = HashMap::new();
 
+        let entry_source = self.modules.get(self.entry_module).source;
+        source_modules.insert(entry_source, self.entry_module);
+
+        for loaded_module in &loaded.modules {
+            if source_modules.contains_key(&loaded_module.source) {
+                continue;
+            }
+
+            let previous = self.environment.switch_scope(self.builtin_scope);
+            self.environment.push_scope();
+            let scope = self.environment.current_scope();
+            self.environment.switch_scope(previous);
+
+
+            let module = self.modules.insert(Module {
+                source: loaded_module.source,
+                scope,
+            });
+
+            source_modules.insert(loaded_module.source, module);
+        }
+
+        for import in loaded.imports {
+            let module = *source_modules
+                .get(&import.target)
+                .expect("loader must supply every imported module");
+
+            self.import_targets.insert(import.path, module);
+        }
+
+        for loaded_module in loaded.modules {
+            let module = *source_modules
+                .get(&loaded_module.source)
+                .expect("loaded module must have an allocated identity");
+
+            self.collect_declarations(module, loaded_module.program);
+        }
+
+        self.finish()
+    }
+
+    pub fn elaborate(
+        mut self,
+        program: Program,
+    ) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
+        self.collect_declarations(self.entry_module, program);
+        self.finish()
+    }
+
+    fn finish(mut self) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
         let order = self.binding_order.clone();
 
         for symbol in &order {
@@ -713,5 +775,54 @@ mod tests {
         assert_eq!(diagnostic.primary.span.source, entry);
         assert_eq!(diagnostic.primary.span.start, 0);
         assert_eq!(diagnostic.primary.span.end, 3);
+    }
+
+    #[test]
+    fn loaded_import_evaluates_public_member() {
+        let directory = tempfile::tempdir().expect("create temp directory");
+        let entry_path = directory.path().join("main.fl");
+
+        let entry_text = r#"
+          comp library = @import("./library.fl");
+
+          comp main = fn() -> i64 {
+              return library.answer;
+          };
+      "#;
+
+        std::fs::write(&entry_path, entry_text).expect("write entry");
+
+        std::fs::write(
+            directory.path().join("library.fl"),
+            "pub comp answer = 42;",
+        )
+            .expect("write library");
+
+        let mut sources = SourceFileManager::new();
+        let entry = sources.add_file(
+            entry_path.to_string_lossy().into_owned(),
+            entry_text.into(),
+        );
+
+        let loaded = crate::imports::load_imports(&mut sources, entry)
+            .expect("imports should load");
+
+        let program = Elaborator::new(&sources, entry, TargetInfo::native())
+            .elaborate_loaded(loaded)
+            .expect("loaded program should elaborate");
+
+        let main_symbol = program.entry_symbol.expect("entry should define main");
+
+        let function_id = match program.values.get(main_symbol) {
+            Some(ComptimeValue::Function(id)) => *id,
+            other => panic!("expected main function, got {other:?}"),
+        };
+
+        assert!(program.functions.get(function_id).is_some());
+
+        let llvm = crate::llvm_inkwell::emit(&program, TargetInfo::native())
+            .expect("imported member should lower to LLVM");
+
+        assert!(llvm.contains("ret i64 42"), "generated LLVM:\n{llvm}");
     }
 }

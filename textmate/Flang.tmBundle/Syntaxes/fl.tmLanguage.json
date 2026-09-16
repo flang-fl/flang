@@ -16,6 +16,9 @@
       "include": "#intrinsics"
     },
     {
+      "include": "#members"
+    },
+    {
       "include": "#function-literals"
     },
     {
@@ -106,6 +109,9 @@
               "include": "#constants"
             },
             {
+              "include": "#operators"
+            },
+            {
               "include": "#punctuation"
             }
           ]
@@ -148,6 +154,9 @@
             },
             {
               "include": "#constants"
+            },
+            {
+              "include": "#operators"
             },
             {
               "include": "#punctuation"
@@ -194,6 +203,9 @@
               "include": "#constants"
             },
             {
+              "include": "#operators"
+            },
+            {
               "include": "#punctuation"
             }
           ]
@@ -202,6 +214,10 @@
     },
     "keywords": {
       "patterns": [
+        {
+          "name": "storage.modifier.visibility.fl",
+          "match": "\\bpub\\b"
+        },
         {
           "name": "keyword.control.conditional.fl",
           "match": "\\b(?:if|else)\\b"
@@ -246,6 +262,38 @@
     },
     "intrinsics": {
       "patterns": [
+        {
+          "name": "meta.intrinsic.import.fl",
+          "begin": "(@)(import)\\b\\s*(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.intrinsic.fl"
+            },
+            "2": {
+              "name": "support.function.intrinsic.fl"
+            },
+            "3": {
+              "name": "punctuation.section.arguments.begin.fl"
+            }
+          },
+          "end": "(\\))|(?=[;{}])",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.section.arguments.end.fl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        },
         {
           "name": "meta.intrinsic.specialization.fl",
           "begin": "(@)([A-Za-z][A-Za-z0-9_]*)(\\s*)(<)",
@@ -307,7 +355,7 @@
       "patterns": [
         {
           "name": "meta.function-call.specialized.fl",
-          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(\\s*)(<)",
+          "begin": "\\b([A-Za-z][A-Za-z0-9_]*)(\\s*)(<)(?=[^;{}\\n]*>\\s*\\()",
           "beginCaptures": {
             "1": {
               "name": "variable.function.fl"
@@ -316,13 +364,16 @@
               "name": "punctuation.definition.arguments.comptime.begin.fl"
             }
           },
-          "end": "(>)(?=\\s*\\()",
+          "end": "(>)(?=\\s*\\()|(?=[;{}])",
           "endCaptures": {
             "1": {
               "name": "punctuation.definition.arguments.comptime.end.fl"
             }
           },
           "patterns": [
+            {
+              "include": "#members"
+            },
             {
               "include": "#strings"
             },
@@ -429,6 +480,10 @@
     "punctuation": {
       "patterns": [
         {
+          "name": "punctuation.accessor.fl",
+          "match": "\\."
+        },
+        {
           "name": "punctuation.terminator.statement.fl",
           "match": ";"
         },
@@ -463,6 +518,32 @@
         {
           "name": "punctuation.section.brackets.end.fl",
           "match": "\\]"
+        }
+      ]
+    },
+    "members": {
+      "patterns": [
+        {
+          "match": "(\\.)(\\s*)([A-Za-z][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.fl"
+            },
+            "3": {
+              "name": "variable.function.fl"
+            }
+          }
+        },
+        {
+          "match": "(\\.)(\\s*)([A-Za-z][A-Za-z0-9_]*)(?![A-Za-z0-9_])(?!(?:\\s*[(<]))",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.fl"
+            },
+            "3": {
+              "name": "variable.other.member.fl"
+            }
+          }
         }
       ]
     }
