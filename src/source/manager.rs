@@ -1,5 +1,5 @@
-use ariadne::Source;
-use crate::source::{SourceFile, SourceId};
+use ariadne::{Source};
+use crate::source::{SourceFile, SourceId, Span};
 
 pub struct SourceFileManager {
     files: Vec<SourceFile>,
@@ -10,6 +10,10 @@ impl SourceFileManager {
         Self {
             files: Vec::new(),
         }
+    }
+
+    pub fn span_text(&self, span: Span) -> &str {
+        self.files[span.source.0].span_text(span)
     }
 
     pub fn add_file(&mut self, name: String, content: String) -> SourceId {

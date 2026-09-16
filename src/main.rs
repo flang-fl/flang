@@ -61,24 +61,30 @@ fn main() {
 
     let mut file_manager = SourceFileManager::new();
     file_manager.add_file(
+        "std".to_owned(),
+        r#"
+        comp add = fn(a: i64, b: i64) -> i64 {
+            return a + b;
+        }
+        "#.to_owned()
+    );
+
+    let entry = file_manager.add_file(
         file.clone(),
         fs::read_to_string(&file).expect("Failed to read file"),
     );
 
-    let [file] = file_manager.files() else {
-        panic!("More than one file not currently supported");
-    };
-
     let target_info = TargetInfo::native();
 
-    match compile(file, target_info) {
+    match compile(&file_manager, entry, target_info) {
         Err(diagnostics) => {
             diagnostics.print_diagnostics(&mut file_manager);
 
             std::process::exit(1);
         }
         Ok((llvm, timings)) => {
-            let source_path = Path::new(&file.name);
+            let entry_file = file_manager.get_file(entry);
+            let source_path = Path::new(&entry_file.name);
 
             let build_dir = source_path.parent().unwrap_or(Path::new(".")).join("build");
 
@@ -130,7 +136,9 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, Duration) {
     (result, started.elapsed())
 }
 
-fn compile(source: &SourceFile, target: TargetInfo) -> Result<(String, CompilationTimings), Vec<Diagnostic>> {
+fn compile(sources: &SourceFileManager, entry: SourceId, target: TargetInfo) -> Result<(String, CompilationTimings), Vec<Diagnostic>> {
+    let source = sources.get_file(entry);
+
     let (tokens, tokenize_time) = measure(|| {
         let tokenizer = Tokenizer::new(source);
         tokenizer.tokenize()
@@ -155,7 +163,7 @@ fn compile(source: &SourceFile, target: TargetInfo) -> Result<(String, Compilati
 
 
     let (program_result, elaboration_time) = measure(|| {
-        Elaborator::new(source, target).elaborate(ast)
+        Elaborator::new(sources, target).elaborate(ast)
     });
 
     let elaborated = program_result?;
@@ -165,7 +173,7 @@ fn compile(source: &SourceFile, target: TargetInfo) -> Result<(String, Compilati
         vec![Diagnostic::error(
             error,
             Span {
-                source: SourceId(0),
+                source: entry,
                 start: 0,
                 end: 0,
             },
@@ -197,7 +205,7 @@ mod tests {
 
         let id = sources.add_file("<test>".to_owned(), text.to_owned());
 
-        let result = compile(sources.get_file(id), TargetInfo::native());
+        let result = compile(&sources, id, TargetInfo::native());
 
         result.map(|(compile, _time)| compile)
     }

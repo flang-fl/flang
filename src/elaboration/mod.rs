@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use crate::TargetInfo;
 use crate::comptime::{ComptimeValue, FunctionId, FunctionStore, FunctionTemplateStore, ValueStore};
 use crate::diagnostics::Diagnostic;
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
@@ -6,8 +6,8 @@ use crate::parser::ast::{ItemData, Program};
 use crate::semantic::hir::{HirBinding, HirProgram};
 use crate::semantic::symbols::{Environment, ExternAbi, Symbol, SymbolId, SymbolKind, SymbolTable};
 use crate::semantic::types::{IntegerType, SpecializationKey, Type};
-use crate::source::SourceFile;
-use crate::TargetInfo;
+use crate::source::SourceFileManager;
+use std::collections::{HashMap, HashSet};
 
 mod analysis;
 mod dependencies;
@@ -23,7 +23,7 @@ pub struct ElaboratedProgram {
 
 pub struct Elaborator<'src> {
     target: TargetInfo,
-    pub(super) source: &'src SourceFile,
+    pub(super) sources: &'src SourceFileManager,
     
     pub(super) symbols: SymbolTable,
     pub(super) environment: Environment,
@@ -58,7 +58,7 @@ pub struct Elaborator<'src> {
 }
 
 impl<'src> Elaborator<'src> {
-    pub fn new(source: &'src SourceFile, target: TargetInfo) -> Self {
+    pub fn new(sources: &'src SourceFileManager, target: TargetInfo) -> Self {
         let mut symbols = SymbolTable::new();
         let mut environment = Environment::new();
 
@@ -159,7 +159,7 @@ impl<'src> Elaborator<'src> {
         
         Self {
             target,
-            source,
+            sources,
             symbols,
             environment,
             diagnostics: Vec::new(),
@@ -247,7 +247,7 @@ impl<'src> Elaborator<'src> {
         for item in program.items {
             let ItemData::Binding(binding) = item.data;
             
-            let name = self.source
+            let name = self.sources
                 .span_text(binding.name)
                 .to_owned();
 
