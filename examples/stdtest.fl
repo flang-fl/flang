@@ -1,0 +1,11 @@
+comp std = @import("./std.fl");
+comp min = std.min;
+comp max = std.max;
+
+comp main = fn() -> i64 {
+    let a = 5;
+    let b = 6;
+
+    return max(std.ANSWER, min(a, b));
+};
+

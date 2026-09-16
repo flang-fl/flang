@@ -1,0 +1,15 @@
+pub comp ANSWER = 42;
+
+pub comp min = fn(a: i64, b: i64) -> i64 {
+    if a < b {
+        return a;
+    }
+    return b;
+};
+
+pub comp max = fn(a: i64, b: i64) -> i64 {
+    if a > b {
+        return a;
+    }
+    return b;
+};

@@ -24,6 +24,38 @@ impl Elaborator<'_> {
         expected: Option<&Type>,
     ) -> HirExpression {
         match &expression.data {
+            ExpressionData::Import { path } => {
+                let Some(module) = self.import_targets.get(path).copied() else {
+                    self.diagnostics.push(Diagnostic::error(
+                        "Import was not resolved",
+                        *path,
+                        "The import must be loaded before elaboration",
+                    ));
+
+                    return HirExpression::error(expression.span);
+                };
+
+                let actual_type = Type::Module(module);
+
+                if let Some(expected_type) = expected {
+                    if *expected_type != Type::Error && *expected_type != actual_type {
+                        self.diagnostics.push(Diagnostic::error(
+                            "Type mismatch",
+                            expression.span,
+                            format!("Expected `{:?}`, found a module", expected_type),
+                        ));
+
+                        return HirExpression::error(expression.span);
+                    }
+                }
+
+                HirExpression {
+                    span: expression.span,
+                    type_: actual_type,
+                    data: HirExpressionData::Module(module),
+                }
+            }
+
             ExpressionData::Member { base, name } => {
                 let base_hir = self.analyze_expression(base, None);
 
@@ -35,10 +67,7 @@ impl Elaborator<'_> {
                     self.diagnostics.push(Diagnostic::error(
                         "Member access requires a module",
                         base.span,
-                        format!(
-                            "Expected a module, found `{:?}`",
-                            base_hir.type_
-                        )
+                        format!("Expected a module, found `{:?}`", base_hir.type_),
                     ));
 
                     return HirExpression::error(expression.span);
@@ -65,15 +94,11 @@ impl Elaborator<'_> {
                 let scope = self.modules.get(module).scope;
                 let member_name = self.sources.span_text(*name);
 
-                let Some(symbol) =
-                    self.environment.lookup_in(scope, member_name)
-                else {
+                let Some(symbol) = self.environment.lookup_in(scope, member_name) else {
                     self.diagnostics.push(Diagnostic::error(
                         "Unknown module member",
                         *name,
-                        format!(
-                            "This module does not declare `{member_name}`"
-                        )
+                        format!("This module does not declare `{member_name}`"),
                     ));
 
                     return HirExpression::error(expression.span);
@@ -83,17 +108,13 @@ impl Elaborator<'_> {
                     self.diagnostics.push(Diagnostic::error(
                         "Module member is private",
                         *name,
-                        format!("`{member_name}` is not declared with `pub`")
+                        format!("`{member_name}` is not declared with `pub`"),
                     ));
 
                     return HirExpression::error(expression.span);
                 }
 
-                self.analyze_symbol_reference(
-                    symbol,
-                    expression.span,
-                    expected,
-                )
+                self.analyze_symbol_reference(symbol, expression.span, expected)
             }
 
             ExpressionData::Intrinsic { name } => {
@@ -706,11 +727,7 @@ impl Elaborator<'_> {
                     return HirExpression::error(expression.span);
                 };
 
-                self.analyze_symbol_reference(
-                    symbol,
-                    expression.span,
-                    expected,
-                )
+                self.analyze_symbol_reference(symbol, expression.span, expected)
             }
         }
     }
@@ -1896,6 +1913,6 @@ fn collect_expression_symbols(expression: &HirExpression, symbols: &mut HashSet<
         }
 
         TypeValue(_) | FunctionTemplate(_) | KnownFunction(_) | Integer(_) | Bool(_)
-        | StringLiteral(_) | Error => {}
+        | StringLiteral(_) | Module(_) | Error => {}
     }
 }

@@ -618,6 +618,10 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
         operands: &Operands<'ctx>,
     ) -> Result<IntValue<'ctx>, String> {
         match &expression.data {
+            HirExpressionData::Module(_) => {
+                Err("a comptime module reached LLVM value emission".to_owned())
+            }
+
             HirExpressionData::StringLiteral(_) => {
                 Err("`str` has no runtime representation".to_owned())
             }
