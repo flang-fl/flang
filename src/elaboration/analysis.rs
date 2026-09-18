@@ -3,7 +3,11 @@ use crate::comptime::{
     ComptimeFunction, ComptimeValue, FunctionId, FunctionTemplate, FunctionTemplateId,
 };
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Phase, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While};
+use crate::parser::ast::{
+    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
+    Phase, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility,
+    While,
+};
 use crate::semantic::hir::{
     HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
     HirParameter, HirPlace, HirPlaceData, HirStatement, HirStatementData,
@@ -445,7 +449,7 @@ impl Elaborator<'_> {
                     self.diagnostics.push(Diagnostic::error(
                         "Unary negation requires an integer",
                         expression.span,
-                        format!("found operand of type `{:?}`", operand.type_, ),
+                        format!("found operand of type `{:?}`", operand.type_,),
                     ));
 
                     return HirExpression::error(expression.span);
@@ -455,7 +459,7 @@ impl Elaborator<'_> {
                     self.diagnostics.push(Diagnostic::error(
                         "Cannot negate an unsigned integer",
                         expression.span,
-                        format!("`{}` is unsigned", integer_type.name(), ),
+                        format!("`{}` is unsigned", integer_type.name(),),
                     ));
 
                     return HirExpression::error(expression.span);
@@ -687,7 +691,7 @@ impl Elaborator<'_> {
                     });
                 }
 
-                let body = self.analyze_block(&function.body, &return_type);
+                let body = self.analyze_block(&function.body, &return_type, true);
 
                 self.environment.pop_scope();
 
@@ -729,10 +733,80 @@ impl Elaborator<'_> {
         }
     }
 
-    pub(super) fn analyze_block(&mut self, block: &Block, return_type: &Type) -> HirBlock {
+    pub(super) fn analyze_block(&mut self, block: &Block, return_type: &Type, needs_to_return: bool) -> HirBlock {
         self.environment.push_scope();
 
         let mut statements = Vec::new();
+
+        fn if_has_guaranteed_return(if_: &If) -> bool {
+            let If {
+                condition: _,
+                then_block,
+                else_,
+            } = if_;
+
+            if has_guaranteed_return(then_block) {
+                match else_ {
+                    None => false, // No else branch means the return isn't guaranteed
+
+                    Some(ElseBranch::Else(block)) => {
+                        if has_guaranteed_return(block) {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+
+                    Some(ElseBranch::ElseIf(if_statement)) => {
+                        let StatementData::If(if_) = &if_statement.data else {
+                            unreachable!()
+                        };
+
+                        if_has_guaranteed_return(if_)
+                    }
+                }
+            } else {
+                false
+            }
+        }
+
+        fn has_guaranteed_return(block: &Block) -> bool {
+            for statement in block.statements.iter() {
+                match &statement.data {
+                    StatementData::Return(_) => return true,
+
+                    StatementData::If(if_) => {
+                        if if_has_guaranteed_return(if_) {
+                            return true;
+                        }
+                    }
+
+                    StatementData::While(While {
+                        condition: _,
+                        while_block,
+                    }) => {
+                        // if has_guaranteed_return(while_block) {
+                        //     return true;
+                        // }
+                        // the body could execute 0 times
+                    }
+
+                    _ => {
+
+                    }
+                }
+            }
+
+            false
+        }
+        let care_for_return = needs_to_return && *return_type != Type::Unit;
+        if care_for_return && !has_guaranteed_return(block) {
+            self.diagnostics.push(Diagnostic::error(
+                "Block does not return in every code path",
+                block.span,
+                ":(",
+            ))
+        }
 
         for statement in &block.statements {
             statements.push(self.analyze_statement(statement, return_type));
@@ -775,12 +849,12 @@ impl Elaborator<'_> {
             }
 
             StatementData::While(While {
-                                     condition,
-                                     while_block,
-                                 }) => {
+                condition,
+                while_block,
+            }) => {
                 let condition = self.analyze_expression(condition, Some(&Type::Bool));
 
-                let while_block = self.analyze_block(while_block, return_type);
+                let while_block = self.analyze_block(while_block, return_type, false);
 
                 HirStatement {
                     span: statement.span,
@@ -792,18 +866,18 @@ impl Elaborator<'_> {
             }
 
             StatementData::If(If {
-                                  condition,
-                                  then_block,
-                                  else_,
-                              }) => {
+                condition,
+                then_block,
+                else_,
+            }) => {
                 let condition = self.analyze_expression(condition, Some(&Type::Bool));
 
-                let then_block = self.analyze_block(then_block, return_type);
+                let then_block = self.analyze_block(then_block, return_type, false);
 
                 let else_branch = match else_ {
                     None => None,
                     Some(ElseBranch::Else(block)) => {
-                        Some(HirElseBranch::Else(self.analyze_block(block, return_type)))
+                        Some(HirElseBranch::Else(self.analyze_block(block, return_type, false)))
                     }
                     Some(ElseBranch::ElseIf(statement)) => {
                         let hir_statement = self.analyze_statement(statement.as_ref(), return_type);
@@ -958,62 +1032,52 @@ impl Elaborator<'_> {
 
                 match kind {
                     SymbolKind::BuiltinType(type_) => type_.clone(),
-                    SymbolKind::ComptimeParameter => {
-                        match self.lookup_value(symbol_id) {
-                            Some(ComptimeValue::Type(type_)) => type_.clone(),
-                            Some(_) => {
-                                self.diagnostics.push(Diagnostic::error(
-                                    "Type mismatch",
-                                    expression.span,
-                                    format!(
-                                        "Expected type `type` got `{:?}`",
-                                        symbol_type
-                                    ),
-                                ));
+                    SymbolKind::ComptimeParameter => match self.lookup_value(symbol_id) {
+                        Some(ComptimeValue::Type(type_)) => type_.clone(),
+                        Some(_) => {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Type mismatch",
+                                expression.span,
+                                format!("Expected type `type` got `{:?}`", symbol_type),
+                            ));
 
-                                Type::Error
-                            }
-                            None => {
-                                Type::Error
-                            }
+                            Type::Error
                         }
-                    }
+                        None => Type::Error,
+                    },
 
-                    SymbolKind::Binding { phase: Phase::Comptime, .. } => {
-                        match self.ensure_binding_evaluated(symbol_id) {
-                            Ok(ComptimeValue::Type(type_)) => type_.clone(),
-                            Ok(_) => {
-                                self.diagnostics.push(Diagnostic::error(
-                                    "Type mismatch",
-                                    expression.span,
-                                    format!(
-                                        "Expected type `type` got `{:?}`",
-                                        symbol_type
-                                    ),
-                                ));
+                    SymbolKind::Binding {
+                        phase: Phase::Comptime,
+                        ..
+                    } => match self.ensure_binding_evaluated(symbol_id) {
+                        Ok(ComptimeValue::Type(type_)) => type_.clone(),
+                        Ok(_) => {
+                            self.diagnostics.push(Diagnostic::error(
+                                "Type mismatch",
+                                expression.span,
+                                format!("Expected type `type` got `{:?}`", symbol_type),
+                            ));
 
-                                Type::Error
-                            }
-                            Err(_) => {
-                                Type::Error
-                            }
+                            Type::Error
                         }
-                    }
+                        Err(_) => Type::Error,
+                    },
 
-                    SymbolKind::Binding { phase: Phase::Runtime, .. } => {
+                    SymbolKind::Binding {
+                        phase: Phase::Runtime,
+                        ..
+                    } => {
                         self.diagnostics.push(Diagnostic::error_with_extra_labels(
                             "Phase mismatch",
                             expression.span,
                             "Binding not known at comptime",
                             match self.symbols.get(symbol_id).declaration_span {
-                                Some(span) => vec![
-                                    Label {
-                                        text: "Binding defined here".to_owned(),
-                                        span
-                                    }
-                                ],
+                                Some(span) => vec![Label {
+                                    text: "Binding defined here".to_owned(),
+                                    span,
+                                }],
 
-                                None => vec![]
+                                None => vec![],
                             },
                         ));
 
@@ -1342,7 +1406,7 @@ impl Elaborator<'_> {
             self.diagnostics.push(Diagnostic::error(
                 "Cannot negate an unsigned integer",
                 result_span,
-                format!("`{}` is unsigned", integer_type.name(), ),
+                format!("`{}` is unsigned", integer_type.name(),),
             ));
 
             return HirExpression::error(result_span);
@@ -1356,7 +1420,7 @@ impl Elaborator<'_> {
             self.diagnostics.push(Diagnostic::error(
                 "Integer literal out of range",
                 result_span,
-                format!("`{value}` does not fit in `{}`", integer_type.name(), ),
+                format!("`{value}` does not fit in `{}`", integer_type.name(),),
             ));
 
             return HirExpression::error(result_span);
@@ -1567,7 +1631,7 @@ impl Elaborator<'_> {
             });
         }
 
-        let body = self.analyze_block(&function.body, &return_type);
+        let body = self.analyze_block(&function.body, &return_type, true);
 
         let mut referenced_symbols = HashSet::new();
         collect_block_symbols(&body, &mut referenced_symbols);
@@ -1579,8 +1643,8 @@ impl Elaborator<'_> {
 
         if return_type == Type::Error
             || hir_parameters
-            .iter()
-            .any(|parameter| parameter.type_ == Type::Error)
+                .iter()
+                .any(|parameter| parameter.type_ == Type::Error)
         {
             return None;
         }
@@ -1684,9 +1748,9 @@ impl Elaborator<'_> {
         }
 
         let [
-        ComptimeValue::String(abi),
-        ComptimeValue::String(link_name),
-        ComptimeValue::Type(function_type),
+            ComptimeValue::String(abi),
+            ComptimeValue::String(link_name),
+            ComptimeValue::Type(function_type),
         ] = values.as_slice()
         else {
             // The expected types above should make this impossible unless

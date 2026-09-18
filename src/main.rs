@@ -1007,4 +1007,54 @@ mod tests {
             "Expected type `type` got `Integer(I64)`",
         );
     }
+
+    #[test]
+    fn if_block_can_fall_through_to_later_return() {
+        assert_return_value(
+            r#"
+          comp main = fn() -> i64 {
+              if false { let x = 1; }
+              return 4;
+          };
+          "#,
+            4,
+        );
+    }
+
+    #[test]
+    fn while_block_can_fall_through_to_later_return() {
+        assert_return_value(
+            r#"
+          comp main = fn() -> i64 {
+              while false { let x = 1; }
+              return 4;
+          };
+          "#,
+            4,
+        );
+    }
+
+    #[test]
+    fn return_inside_optional_loop_is_not_guaranteed() {
+        assert_compile_error(
+            r#"
+          comp main = fn() -> i64 {
+              while false { return 4; }
+          };
+          "#,
+            "Block does not return in every code path",
+        );
+    }
+
+    #[test]
+    fn if_without_else_does_not_guarantee_return() {
+        assert_compile_error(
+            r#"
+          comp main = fn() -> i64 {
+              if true { return 4; }
+          };
+          "#,
+            "Block does not return in every code path",
+        );
+    }
 }
