@@ -956,4 +956,55 @@ mod tests {
         assert_eq!(sources.files().len(), 2);
         assert!(llvm.contains("ret i64 42"), "generated LLVM:\n{llvm}");
     }
+
+    #[test]
+    fn type_alias_works_in_annotation() {
+        assert_return_value(
+            r#"
+          comp Alias: type = i64;
+          comp main = fn() -> Alias {
+              let value: Alias = 7;
+              return value;
+          };
+          "#,
+            7,
+        );
+    }
+
+    #[test]
+    fn comptime_type_parameter_works_in_signature() {
+        assert_return_value(
+            r#"
+          comp identity = fn<T: type>(value: T) -> T {
+              return value;
+          };
+          comp main = fn() -> i64 {
+              return identity<i64>(7);
+          };
+          "#,
+            7,
+        );
+    }
+
+    #[test]
+    fn forward_type_alias_works_in_annotation() {
+        assert_return_value(
+            r#"
+          comp main = fn() -> Alias { return 7; };
+          comp Alias: type = i64;
+          "#,
+            7,
+        );
+    }
+
+    #[test]
+    fn non_type_value_cannot_be_used_as_type() {
+        assert_compile_error(
+            r#"
+          comp N = 12;
+          comp main = fn() -> N { return 7; };
+          "#,
+            "Expected type `type` got `Integer(I64)`",
+        );
+    }
 }

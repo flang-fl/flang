@@ -81,6 +81,13 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             "Expected identifier at top-level Binding",
         )?;
 
+        let type_annotation = if self.peek_is(TokenKind::Colon) {
+            self.expect(TokenKind::Colon, "Expected `:`")?;
+            Some(self.parse_type_expression()?)
+        } else {
+            None
+        };
+
         self.expect(TokenKind::Eq, "Expected `=` at top-level Binding")?;
 
         let expression = self.parse_expression()?;
@@ -93,7 +100,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             data: ItemData::Binding(Binding {
                 name: identifier.span,
                 expression,
-                type_annotation: None, // TODO
+                type_annotation,
                 mutable: false,        // TODO
                 phase: Comptime,
             }),

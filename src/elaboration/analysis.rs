@@ -3,10 +3,7 @@ use crate::comptime::{
     ComptimeFunction, ComptimeValue, FunctionId, FunctionTemplate, FunctionTemplateId,
 };
 use crate::diagnostics::{Diagnostic, Label};
-use crate::parser::ast::{
-    BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
-    Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While,
-};
+use crate::parser::ast::{BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If, Phase, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility, While};
 use crate::semantic::hir::{
     HirBinding, HirBlock, HirElseBranch, HirExpression, HirExpressionData, HirFunctionExpression,
     HirParameter, HirPlace, HirPlaceData, HirStatement, HirStatementData,
@@ -448,7 +445,7 @@ impl Elaborator<'_> {
                     self.diagnostics.push(Diagnostic::error(
                         "Unary negation requires an integer",
                         expression.span,
-                        format!("found operand of type `{:?}`", operand.type_,),
+                        format!("found operand of type `{:?}`", operand.type_, ),
                     ));
 
                     return HirExpression::error(expression.span);
@@ -458,7 +455,7 @@ impl Elaborator<'_> {
                     self.diagnostics.push(Diagnostic::error(
                         "Cannot negate an unsigned integer",
                         expression.span,
-                        format!("`{}` is unsigned", integer_type.name(),),
+                        format!("`{}` is unsigned", integer_type.name(), ),
                     ));
 
                     return HirExpression::error(expression.span);
@@ -778,9 +775,9 @@ impl Elaborator<'_> {
             }
 
             StatementData::While(While {
-                condition,
-                while_block,
-            }) => {
+                                     condition,
+                                     while_block,
+                                 }) => {
                 let condition = self.analyze_expression(condition, Some(&Type::Bool));
 
                 let while_block = self.analyze_block(while_block, return_type);
@@ -795,10 +792,10 @@ impl Elaborator<'_> {
             }
 
             StatementData::If(If {
-                condition,
-                then_block,
-                else_,
-            }) => {
+                                  condition,
+                                  then_block,
+                                  else_,
+                              }) => {
                 let condition = self.analyze_expression(condition, Some(&Type::Bool));
 
                 let then_block = self.analyze_block(then_block, return_type);
@@ -954,13 +951,79 @@ impl Elaborator<'_> {
                     return Type::Error;
                 };
 
-                match &self.symbols.get(symbol_id).kind {
+                let (kind, symbol_type) = {
+                    let symbol = self.symbols.get(symbol_id);
+                    (symbol.kind.clone(), symbol.type_.clone())
+                };
+
+                match kind {
                     SymbolKind::BuiltinType(type_) => type_.clone(),
+                    SymbolKind::ComptimeParameter => {
+                        match self.lookup_value(symbol_id) {
+                            Some(ComptimeValue::Type(type_)) => type_.clone(),
+                            Some(_) => {
+                                self.diagnostics.push(Diagnostic::error(
+                                    "Type mismatch",
+                                    expression.span,
+                                    format!(
+                                        "Expected type `type` got `{:?}`",
+                                        symbol_type
+                                    ),
+                                ));
+
+                                Type::Error
+                            }
+                            None => {
+                                Type::Error
+                            }
+                        }
+                    }
+
+                    SymbolKind::Binding { phase: Phase::Comptime, .. } => {
+                        match self.ensure_binding_evaluated(symbol_id) {
+                            Ok(ComptimeValue::Type(type_)) => type_.clone(),
+                            Ok(_) => {
+                                self.diagnostics.push(Diagnostic::error(
+                                    "Type mismatch",
+                                    expression.span,
+                                    format!(
+                                        "Expected type `type` got `{:?}`",
+                                        symbol_type
+                                    ),
+                                ));
+
+                                Type::Error
+                            }
+                            Err(_) => {
+                                Type::Error
+                            }
+                        }
+                    }
+
+                    SymbolKind::Binding { phase: Phase::Runtime, .. } => {
+                        self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                            "Phase mismatch",
+                            expression.span,
+                            "Binding not known at comptime",
+                            match self.symbols.get(symbol_id).declaration_span {
+                                Some(span) => vec![
+                                    Label {
+                                        text: "Binding defined here".to_owned(),
+                                        span
+                                    }
+                                ],
+
+                                None => vec![]
+                            },
+                        ));
+
+                        Type::Error
+                    }
                     _ => {
                         self.diagnostics.push(Diagnostic::error(
-                            "Expected a Type found a Value".to_owned(),
+                            "Expected a Type found a Value",
                             expression.span,
-                            ":(".to_owned(),
+                            ":(",
                         ));
                         Type::Error
                     }
@@ -1279,7 +1342,7 @@ impl Elaborator<'_> {
             self.diagnostics.push(Diagnostic::error(
                 "Cannot negate an unsigned integer",
                 result_span,
-                format!("`{}` is unsigned", integer_type.name(),),
+                format!("`{}` is unsigned", integer_type.name(), ),
             ));
 
             return HirExpression::error(result_span);
@@ -1293,7 +1356,7 @@ impl Elaborator<'_> {
             self.diagnostics.push(Diagnostic::error(
                 "Integer literal out of range",
                 result_span,
-                format!("`{value}` does not fit in `{}`", integer_type.name(),),
+                format!("`{value}` does not fit in `{}`", integer_type.name(), ),
             ));
 
             return HirExpression::error(result_span);
@@ -1516,8 +1579,8 @@ impl Elaborator<'_> {
 
         if return_type == Type::Error
             || hir_parameters
-                .iter()
-                .any(|parameter| parameter.type_ == Type::Error)
+            .iter()
+            .any(|parameter| parameter.type_ == Type::Error)
         {
             return None;
         }
@@ -1621,9 +1684,9 @@ impl Elaborator<'_> {
         }
 
         let [
-            ComptimeValue::String(abi),
-            ComptimeValue::String(link_name),
-            ComptimeValue::Type(function_type),
+        ComptimeValue::String(abi),
+        ComptimeValue::String(link_name),
+        ComptimeValue::Type(function_type),
         ] = values.as_slice()
         else {
             // The expected types above should make this impossible unless
@@ -1788,7 +1851,7 @@ impl Elaborator<'_> {
                         expected_type, actual_type
                     ),
                     span,
-                    format!("Should be of type `{:?}`", expected_type)
+                    format!("Should be of type `{:?}`", expected_type),
                 ));
 
                 return HirExpression::error(span);

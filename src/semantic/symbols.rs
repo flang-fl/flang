@@ -171,7 +171,7 @@ pub struct Symbol {
     pub visibility: Visibility,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SymbolKind {
     BuiltinType(Type),
     Binding { phase: Phase, mutable: bool },
