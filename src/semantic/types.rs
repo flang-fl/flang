@@ -1,6 +1,9 @@
+use std::fmt;
 use crate::comptime::FunctionTemplateId;
 use crate::semantic::symbols::ModuleId;
 use crate::TargetInfo;
+use fmt::Write;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -21,6 +24,13 @@ pub enum Type {
     Error,
     Unknown,
     Type,
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // TODO
+        f.write_str(&format!("{:?}", self))
+    }
 }
 
 impl Type {

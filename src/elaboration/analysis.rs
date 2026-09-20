@@ -2,7 +2,7 @@ use super::Elaborator;
 use crate::comptime::{
     ComptimeFunction, ComptimeValue, FunctionId, FunctionTemplate, FunctionTemplateId,
 };
-use crate::diagnostics::{Diagnostic, Label};
+use crate::diagnostics::{Diagnostic, Diagnostics, Label};
 use crate::parser::ast::{
     BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
     Phase, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility,
@@ -15,7 +15,6 @@ use crate::semantic::hir::{
 use crate::semantic::symbols::{ExternAbi, Symbol, SymbolId, SymbolKind};
 use crate::semantic::types::{ComptimeKey, IntegerType, SpecializationKey, Type};
 use crate::source::Span;
-use log::info;
 use std::collections::{HashMap, HashSet};
 
 impl Elaborator<'_> {
@@ -27,26 +26,21 @@ impl Elaborator<'_> {
         match &expression.data {
             ExpressionData::Import { path } => {
                 let Some(module) = self.import_targets.get(path).copied() else {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Import was not resolved",
                         *path,
                         "The import must be loaded before elaboration",
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 };
 
                 let actual_type = Type::Module(module);
 
                 if let Some(expected_type) = expected {
                     if *expected_type != Type::Error && *expected_type != actual_type {
-                        self.diagnostics.push(Diagnostic::error(
-                            "Type mismatch",
-                            expression.span,
-                            format!("Expected `{:?}`, found a module", expected_type),
-                        ));
-
-                        return HirExpression::error(expression.span);
+                        self.diagnostics.type_mismatch(expression.span, expected_type, actual_type);
+                        return hir_error(expression.span);
                     }
                 }
 
@@ -61,34 +55,34 @@ impl Elaborator<'_> {
                 let base_hir = self.analyze_expression(base, None);
 
                 if base_hir.type_ == Type::Error {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 if !matches!(&base_hir.type_, Type::Module(_)) {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Member access requires a module",
                         base.span,
                         format!("Expected a module, found `{:?}`", base_hir.type_),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let module = match self.evaluate_expression(&base_hir) {
                     ComptimeValue::Module(module) => module,
 
                     ComptimeValue::Error => {
-                        return HirExpression::error(expression.span);
+                        return hir_error(expression.span);
                     }
 
                     _ => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Expected a comptime module value",
                             base.span,
                             "The expression did not evaluate to a module",
-                        ));
+                        );
 
-                        return HirExpression::error(expression.span);
+                        return hir_error(expression.span);
                     }
                 };
 
@@ -96,56 +90,51 @@ impl Elaborator<'_> {
                 let member_name = self.sources.span_text(*name);
 
                 let Some(symbol) = self.environment.lookup_in(scope, member_name) else {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Unknown module member",
                         *name,
                         format!("This module does not declare `{member_name}`"),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 };
 
                 if self.symbols.get(symbol).visibility != Visibility::Public {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Module member is private",
                         *name,
                         format!("`{member_name}` is not declared with `pub`"),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 self.analyze_symbol_reference(symbol, expression.span, expected)
             }
 
             ExpressionData::Intrinsic { name } => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Intrinsics are currently unsupported",
                     expression.span,
                     ":(",
-                ));
+                );
 
-                HirExpression::error(expression.span)
+                hir_error(expression.span)
             }
 
             ExpressionData::TypeValue(type_expression) => {
                 let value = self.resolve_type_expression(type_expression);
 
                 if value == Type::Error {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 if let Some(expected) = expected
                     && *expected != Type::Type
                     && *expected != Type::Error
                 {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Type mismatch",
-                        expression.span,
-                        format!("expected `{:?}` but got `type`", expected),
-                    ));
-
-                    return HirExpression::error(expression.span);
+                    self.diagnostics.type_mismatch(expression.span, expected, "type");
+                    return hir_error(expression.span);
                 }
 
                 HirExpression {
@@ -170,13 +159,13 @@ impl Elaborator<'_> {
                 if let Some(type_) = expected
                     && *type_ != Type::Str
                 {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Type mismatch",
                         expression.span,
                         format!("expected `{:?}` but got `{:?}`", type_, Type::Str),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 return HirExpression {
@@ -192,34 +181,27 @@ impl Elaborator<'_> {
                     self.analyze_expression(index, Some(&Type::Integer(IntegerType::Usize)));
 
                 if base.type_ == Type::Error || index.type_ == Type::Error {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let (element_type, array_size) = match &base.type_ {
                     Type::FixedArray { base_type, size } => (base_type.as_ref().clone(), *size),
 
                     other => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Value is not indexable",
                             base.span,
                             format!("expected an array, found `{other:?}`"),
-                        ));
+                        );
 
-                        return HirExpression::error(expression.span);
+                        return hir_error(expression.span);
                     }
                 };
 
                 if let Some(expected) = expected {
                     if *expected != Type::Error && *expected != element_type {
-                        self.diagnostics.push(Diagnostic::error(
-                            "Type mismatch",
-                            expression.span,
-                            format!(
-                                "expected `{expected:?}`, but indexing this array produces `{element_type:?}`"
-                            ),
-                        ));
-
-                        return HirExpression::error(expression.span);
+                        self.diagnostics.type_mismatch(expression.span, expected, element_type);
+                        return hir_error(expression.span);
                     }
                 }
 
@@ -228,13 +210,13 @@ impl Elaborator<'_> {
                         usize::try_from(*index_value).is_ok_and(|index| index < array_size);
 
                     if !valid_index {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Array index out of bounds",
                             index.span,
                             format!("array length is {array_size}, but the index is {index_value}"),
-                        ));
+                        );
 
-                        return HirExpression::error(expression.span);
+                        return hir_error(expression.span);
                     }
                 }
 
@@ -251,35 +233,28 @@ impl Elaborator<'_> {
             ExpressionData::ArrayRepeatInitialization { value, size } => {
                 let amount: usize = match self.resolve_static_array_length(size) {
                     Some(amount) => amount,
-                    None => return HirExpression::error(expression.span),
+                    None => return hir_error(expression.span),
                 };
 
                 let base_type = if let Some(expected) = expected {
                     match expected {
                         Type::FixedArray { base_type, size } => {
                             if *size != amount {
-                                self.diagnostics.push(Diagnostic::error(
+                                self.diagnostics.error(
                                     "Array Length Mismatch",
                                     expression.span,
                                     format!(
                                         "Expected Array of length {size} but got length {amount}"
                                     ),
-                                ));
-                                return HirExpression::error(expression.span);
+                                );
+                                return hir_error(expression.span);
                             }
                             Some(base_type.as_ref())
                         }
 
                         _ => {
-                            self.diagnostics.push(Diagnostic::error(
-                                "Type mismatch",
-                                expression.span,
-                                format!(
-                                    "expected expression of type `{:?}` but got Array",
-                                    expected
-                                ),
-                            ));
-                            return HirExpression::error(expression.span);
+                            self.diagnostics.type_mismatch(expression.span, expected, "array");
+                            return hir_error(expression.span);
                         }
                     }
                 } else {
@@ -304,16 +279,8 @@ impl Elaborator<'_> {
             ExpressionData::Boolean(bool) => {
                 if let Some(expected) = expected {
                     if *expected != Type::Bool {
-                        self.diagnostics.push(Diagnostic::error(
-                            "Type mismatch",
-                            expression.span,
-                            format!(
-                                "Expected expression of type `{:?}` but got `{:?}`",
-                                expected,
-                                Type::Bool
-                            ),
-                        ));
-                        return HirExpression::error(expression.span);
+                        self.diagnostics.type_mismatch(expression.span, expected, Type::Bool);
+                        return hir_error(expression.span);
                     }
                 }
 
@@ -337,37 +304,37 @@ impl Elaborator<'_> {
                 };
 
                 if lhs.type_ == Type::Error {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let supports_equality = lhs.type_.is_integer() || lhs.type_ == Type::Bool;
                 if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && !supports_equality
                 {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Type does not support equality",
                         expression.span,
                         format!("found operands of type `{:?}`", lhs.type_),
-                    ))
+                    )
                 }
 
                 let rhs = self.analyze_expression(rhs, Some(&lhs.type_));
 
                 if rhs.type_ == Type::Error {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 if lhs.type_ != rhs.type_ {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Binary operand type mismatch",
                         expression.span,
                         format!(
                             "left operand has type `{:?}`, but right operand has type `{:?}`",
                             lhs.type_, rhs.type_
                         ),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let requires_integer = matches!(
@@ -383,13 +350,13 @@ impl Elaborator<'_> {
                 );
 
                 if requires_integer && !lhs.type_.is_integer() {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Operator requires integer operands",
                         expression.span,
                         format!("found operands of type `{:?}`", lhs.type_),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let resulting_type = match operator {
@@ -408,16 +375,16 @@ impl Elaborator<'_> {
 
                 if let Some(expected) = expected {
                     if *expected != resulting_type {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Type mismatch",
                             expression.span,
                             format!(
                                 "Expected `{:?}`, but this expression produces `{:?}`",
                                 expected, resulting_type
                             ),
-                        ));
+                        );
 
-                        return HirExpression::error(expression.span);
+                        return hir_error(expression.span);
                     }
                 }
 
@@ -442,27 +409,27 @@ impl Elaborator<'_> {
                 let operand = self.analyze_expression(operand, expected);
 
                 if operand.type_ == Type::Error {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let Some(integer_type) = operand.type_.as_integer() else {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Unary negation requires an integer",
                         expression.span,
                         format!("found operand of type `{:?}`", operand.type_,),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 };
 
                 if !integer_type.is_signed() {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Cannot negate an unsigned integer",
                         expression.span,
                         format!("`{}` is unsigned", integer_type.name(),),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 HirExpression {
@@ -482,13 +449,13 @@ impl Elaborator<'_> {
                         "extern" => self.analyze_extern_intrinsic(arguments, expression.span),
 
                         other => {
-                            self.diagnostics.push(Diagnostic::error(
+                            self.diagnostics.error(
                                 "Unknown intrinsic",
                                 callee.span,
                                 format!("Unknown intrinsic `{}`", other),
-                            ));
+                            );
 
-                            HirExpression::error(expression.span)
+                            hir_error(expression.span)
                         }
                     };
                 }
@@ -497,20 +464,20 @@ impl Elaborator<'_> {
 
                 let Type::FunctionTemplate(template_id) = callee.type_ else {
                     if callee.type_ != Type::Error {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Expression cannot be specialized",
                             callee.span,
                             format!("expected a function template found `{:?}`", callee.type_),
-                        ));
+                        );
                     }
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 };
 
                 let Some(function_id) =
                     self.specialize_function(template_id, arguments, expression.span)
                 else {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 };
 
                 let function = self
@@ -538,7 +505,7 @@ impl Elaborator<'_> {
             ExpressionData::Call { callee, arguments } => {
                 let callee = self.analyze_expression(callee, None);
                 if callee.type_ == Type::Error {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let (parameter_types, return_type) = match &callee.type_ {
@@ -548,18 +515,18 @@ impl Elaborator<'_> {
                     } => (parameters.clone(), return_type.as_ref().clone()),
 
                     actual_type => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Expression is not callable",
                             callee.span,
                             format!("expected a function, found `{:?}`", actual_type),
-                        ));
+                        );
 
-                        return HirExpression::error(expression.span);
+                        return hir_error(expression.span);
                     }
                 };
 
                 if arguments.len() != parameter_types.len() {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Incorrect number of arguments",
                         expression.span,
                         format!(
@@ -567,9 +534,9 @@ impl Elaborator<'_> {
                             parameter_types.len(),
                             arguments.len()
                         ),
-                    ));
+                    );
 
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 let hir_arguments = arguments
@@ -584,18 +551,18 @@ impl Elaborator<'_> {
                     .iter()
                     .any(|argument| argument.type_ == Type::Error)
                 {
-                    return HirExpression::error(expression.span);
+                    return hir_error(expression.span);
                 }
 
                 if let Some(expected_type) = expected {
                     if *expected_type != Type::Error && *expected_type != return_type {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Call result has the wrong type",
                             expression.span,
                             format!("Expected `{:?}`, found `{:?}`", expected_type, return_type),
-                        ));
+                        );
 
-                        return HirExpression::error(expression.span);
+                        return hir_error(expression.span);
                     }
                 }
 
@@ -662,7 +629,7 @@ impl Elaborator<'_> {
                     let name = self.sources.span_text(parameter.name).to_owned();
 
                     if let Some(old) = names.insert(name.clone(), parameter.name) {
-                        self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                        self.diagnostics.error_with_extra_labels(
                             "Duplicate parameter name",
                             parameter.name,
                             "duplicate",
@@ -670,7 +637,7 @@ impl Elaborator<'_> {
                                 span: old,
                                 text: "already defined here".to_owned(),
                             }],
-                        ));
+                        );
                     }
 
                     let symbol_id = self.symbols.insert(Symbol {
@@ -720,12 +687,12 @@ impl Elaborator<'_> {
                 let name = self.sources.span_text(expression.span);
 
                 let Some(symbol) = self.environment.lookup(name) else {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Identifier not bound",
                         expression.span,
                         format!("Identifier `{name}` is not bound"),
-                    ));
-                    return HirExpression::error(expression.span);
+                    );
+                    return hir_error(expression.span);
                 };
 
                 self.analyze_symbol_reference(symbol, expression.span, expected)
@@ -801,11 +768,11 @@ impl Elaborator<'_> {
         }
         let care_for_return = needs_to_return && *return_type != Type::Unit;
         if care_for_return && !has_guaranteed_return(block) {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Block does not return in every code path",
                 block.span,
                 ":(",
-            ))
+            )
         }
 
         for statement in &block.statements {
@@ -912,13 +879,13 @@ impl Elaborator<'_> {
                     binding.expression.span,
                     "runtime bindings cannot contain unsized types",
                 ) {
-                    expression = HirExpression::error(binding.expression.span);
+                    expression = hir_error(binding.expression.span);
                 }
 
                 if let Some(previous_id) = self.environment.lookup_current(&name) {
                     let previous = self.symbols.get(previous_id);
 
-                    self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                    self.diagnostics.error_with_extra_labels(
                         "Duplicate local binding",
                         binding.name,
                         "duplicate binding",
@@ -931,7 +898,7 @@ impl Elaborator<'_> {
                                 }]
                             })
                             .unwrap_or_default(),
-                    ))
+                    )
                 }
 
                 let symbol_id = self.symbols.insert(Symbol {
@@ -963,11 +930,11 @@ impl Elaborator<'_> {
                             data: HirStatementData::Return(None),
                         }
                     } else {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Return without value in function with non-unit return type".to_owned(),
                             statement.span,
                             format!("Expected a `{:?}`", return_type),
-                        ));
+                        );
 
                         HirStatement {
                             span: statement.span,
@@ -1017,11 +984,11 @@ impl Elaborator<'_> {
                 let name = self.sources.span_text(expression.span);
 
                 let Some(symbol_id) = self.environment.lookup(name) else {
-                    self.diagnostics.push(Diagnostic::error(
-                        "Unknown Type".to_owned(),
+                    self.diagnostics.error(
+                        "Unknown Type",
                         expression.span,
-                        ":(".to_owned(),
-                    ));
+                        ":(",
+                    );
                     return Type::Error;
                 };
 
@@ -1035,12 +1002,7 @@ impl Elaborator<'_> {
                     SymbolKind::ComptimeParameter => match self.lookup_value(symbol_id) {
                         Some(ComptimeValue::Type(type_)) => type_.clone(),
                         Some(_) => {
-                            self.diagnostics.push(Diagnostic::error(
-                                "Type mismatch",
-                                expression.span,
-                                format!("Expected type `type` got `{:?}`", symbol_type),
-                            ));
-
+                            self.diagnostics.type_mismatch(expression.span, "type", symbol_type);
                             Type::Error
                         }
                         None => Type::Error,
@@ -1052,12 +1014,7 @@ impl Elaborator<'_> {
                     } => match self.ensure_binding_evaluated(symbol_id) {
                         Ok(ComptimeValue::Type(type_)) => type_.clone(),
                         Ok(_) => {
-                            self.diagnostics.push(Diagnostic::error(
-                                "Type mismatch",
-                                expression.span,
-                                format!("Expected type `type` got `{:?}`", symbol_type),
-                            ));
-
+                            self.diagnostics.type_mismatch(expression.span, "type", symbol_type);
                             Type::Error
                         }
                         Err(_) => Type::Error,
@@ -1067,7 +1024,7 @@ impl Elaborator<'_> {
                         phase: Phase::Runtime,
                         ..
                     } => {
-                        self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                        self.diagnostics.error_with_extra_labels(
                             "Phase mismatch",
                             expression.span,
                             "Binding not known at comptime",
@@ -1079,16 +1036,16 @@ impl Elaborator<'_> {
 
                                 None => vec![],
                             },
-                        ));
+                        );
 
                         Type::Error
                     }
                     _ => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Expected a Type found a Value",
                             expression.span,
                             ":(",
-                        ));
+                        );
                         Type::Error
                     }
                 }
@@ -1128,11 +1085,11 @@ impl Elaborator<'_> {
                 let name = self.sources.span_text(target.span);
 
                 let Some(symbol_id) = self.environment.lookup(name) else {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Unknown assignment target",
                         target.span,
                         format!("`{name}` is not defined"),
-                    ));
+                    );
 
                     return None;
                 };
@@ -1147,11 +1104,11 @@ impl Elaborator<'_> {
                 };
 
                 if !mutable {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Cannot assign to immutable binding",
                         target.span,
                         format!("`{name}` is not mutable"),
-                    ));
+                    );
                 }
 
                 Some(HirPlace {
@@ -1165,11 +1122,11 @@ impl Elaborator<'_> {
                 let base_place = self.analyze_place(base)?;
 
                 let HirPlaceData::Symbol(array) = base_place.data else {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Unsupported assignment target",
                         base.span,
                         "nested indexed places are not supported yet",
-                    ));
+                    );
 
                     return None;
                 };
@@ -1179,11 +1136,11 @@ impl Elaborator<'_> {
                     base_type,
                 } = base_place.type_
                 else {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Value is not indexable",
                         base.span,
                         "assignment target must be an array",
-                    ));
+                    );
 
                     return None;
                 };
@@ -1199,13 +1156,13 @@ impl Elaborator<'_> {
                     let valid = usize::try_from(*index_value).is_ok_and(|index| index < array_size);
 
                     if !valid {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Array index out of bounds",
                             index.span,
                             format!(
                                 "array length is {array_size}, but the index is `{index_value}`"
                             ),
-                        ));
+                        );
 
                         return None;
                     }
@@ -1223,11 +1180,11 @@ impl Elaborator<'_> {
             }
 
             _ => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Invalid assignment target",
                     target.span,
                     "this expression does not identify writable storage",
-                ));
+                );
 
                 None
             }
@@ -1249,11 +1206,11 @@ impl Elaborator<'_> {
         } = value
         else {
             if value != ComptimeValue::Error {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Array length is not an integer",
                     expression.span,
                     "expected a compile-time `usize` value",
-                ));
+                );
             }
 
             return None;
@@ -1263,11 +1220,11 @@ impl Elaborator<'_> {
             Ok(length) => Some(length),
 
             Err(_) => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Invalid array length",
                     expression.span,
                     format!("`{value}` is not a valid array length"),
-                ));
+                );
 
                 None
             }
@@ -1290,11 +1247,11 @@ impl Elaborator<'_> {
             Ok(value) => value,
 
             Err(_) => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Integer literal is too large",
                     span,
                     "this literal cannot be represented by the compiler",
-                ));
+                );
                 return None;
             }
         };
@@ -1313,11 +1270,11 @@ impl Elaborator<'_> {
             "isize" => Some(IntegerType::Isize),
 
             unknown => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Unknown integer suffix",
                     span,
                     format!("`{unknown}` is not a supported integer suffix"),
-                ));
+                );
                 return None;
             }
         };
@@ -1333,7 +1290,7 @@ impl Elaborator<'_> {
         negate: bool,
     ) -> HirExpression {
         let Some(literal) = self.parse_integer_literal(expression.span) else {
-            return HirExpression::error(result_span);
+            return hir_error(result_span);
         };
 
         let expected_integer = expected.and_then(Type::as_integer);
@@ -1343,7 +1300,7 @@ impl Elaborator<'_> {
                 if let Some(expected_integer) = expected_integer
                     && expected_integer != suffix
                 {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Integer type mismatch",
                         result_span,
                         format!(
@@ -1352,9 +1309,9 @@ impl Elaborator<'_> {
                             expected_integer.name(),
                             suffix.name(),
                         ),
-                    ));
+                    );
 
-                    return HirExpression::error(result_span);
+                    return hir_error(result_span);
                 }
 
                 suffix
@@ -1366,18 +1323,8 @@ impl Elaborator<'_> {
                         Some(integer) => integer,
 
                         None => {
-                            self.diagnostics.push(Diagnostic::error(
-                                "Type mismatch",
-                                result_span,
-                                format!(
-                                    "expected \
-                                       `{expected:?}`, but \
-                                       found an integer \
-                                       literal"
-                                ),
-                            ));
-
-                            return HirExpression::error(result_span);
+                            self.diagnostics.type_mismatch(result_span, expected, "Integer Literal");
+                            return hir_error(result_span);
                         }
                     }
                 } else {
@@ -1389,27 +1336,18 @@ impl Elaborator<'_> {
         if let Some(expected) = expected
             && !expected.is_integer()
         {
-            self.diagnostics.push(Diagnostic::error(
-                "Type mismatch",
-                result_span,
-                format!(
-                    "expected `{expected:?}`, but \
-                       found `{}`",
-                    integer_type.name(),
-                ),
-            ));
-
-            return HirExpression::error(result_span);
+            self.diagnostics.type_mismatch(result_span, expected, integer_type.name());
+            return hir_error(result_span);
         }
 
         if negate && !integer_type.is_signed() {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Cannot negate an unsigned integer",
                 result_span,
                 format!("`{}` is unsigned", integer_type.name(),),
-            ));
+            );
 
-            return HirExpression::error(result_span);
+            return hir_error(result_span);
         }
 
         let magnitude = literal.magnitude as i128;
@@ -1417,13 +1355,13 @@ impl Elaborator<'_> {
         let value = if negate { -magnitude } else { magnitude };
 
         if !integer_type.contains(value, &self.target) {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Integer literal out of range",
                 result_span,
                 format!("`{value}` does not fit in `{}`", integer_type.name(),),
-            ));
+            );
 
-            return HirExpression::error(result_span);
+            return hir_error(result_span);
         }
 
         HirExpression {
@@ -1444,7 +1382,7 @@ impl Elaborator<'_> {
         let function = template.ast;
 
         if arguments.len() != function.comptime_args.len() {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Incorrect number of comptime arguments",
                 span,
                 format!(
@@ -1452,7 +1390,7 @@ impl Elaborator<'_> {
                     function.comptime_args.len(),
                     arguments.len()
                 ),
-            ));
+            );
 
             return None;
         }
@@ -1506,11 +1444,11 @@ impl Elaborator<'_> {
         }
 
         if !self.active_specializations.insert(key.clone()) {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Recursive specialization",
                 span,
                 "this specialization depends on itself",
-            )); // TODO: Show path of dependency
+            ); // TODO: Show path of dependency
 
             return None;
         }
@@ -1551,7 +1489,7 @@ impl Elaborator<'_> {
             let name = self.sources.span_text(parameter.name).to_owned();
 
             if let Some(previous) = names.insert(name.clone(), parameter.name) {
-                self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                self.diagnostics.error_with_extra_labels(
                     "Duplicate parameter name",
                     parameter.name,
                     "duplicate",
@@ -1559,7 +1497,7 @@ impl Elaborator<'_> {
                         span: previous,
                         text: "already defined here".to_owned(),
                     }],
-                ));
+                );
             }
 
             let symbol = self.symbols.insert(Symbol {
@@ -1602,7 +1540,7 @@ impl Elaborator<'_> {
             let name = self.sources.span_text(parameter.name).to_owned();
 
             if let Some(previous) = names.insert(name.clone(), parameter.name) {
-                self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                self.diagnostics.error_with_extra_labels(
                     "Duplicate parameter name",
                     parameter.name,
                     "duplicate",
@@ -1610,7 +1548,7 @@ impl Elaborator<'_> {
                         span: previous,
                         text: "already defined here".to_owned(),
                     }],
-                ));
+                );
             }
 
             let symbol = self.symbols.insert(Symbol {
@@ -1673,11 +1611,11 @@ impl Elaborator<'_> {
             ComptimeValue::Bool(value) => Some(ComptimeKey::Bool(*value)),
 
             unsupported => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Unsupported compile-time argument",
                     span,
                     format!("`{unsupported:?}` cannot currently be used as a specialization key"),
-                ));
+                );
 
                 None
             }
@@ -1691,11 +1629,11 @@ impl Elaborator<'_> {
         description: &str,
     ) -> bool {
         let mut diagnostic_unsized = |type_name: &str| {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 format!("`{}` has no runtime representation", type_name),
                 span,
                 description,
-            ));
+            );
         };
 
         match type_ {
@@ -1718,13 +1656,13 @@ impl Elaborator<'_> {
 
     fn analyze_extern_intrinsic(&mut self, arguments: &[Expression], span: Span) -> HirExpression {
         if arguments.len() != 3 {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Incorrect number of arguments to `@extern`",
                 span,
                 format!("expected 3, but found {}", arguments.len()),
-            ));
+            );
 
-            return HirExpression::error(span);
+            return hir_error(span);
         }
 
         let expected_types = [Type::Str, Type::Str, Type::Type];
@@ -1735,13 +1673,13 @@ impl Elaborator<'_> {
             let hir_argument = self.analyze_expression(argument, Some(expected_type));
 
             if hir_argument.type_ == Type::Error {
-                return HirExpression::error(span);
+                return hir_error(span);
             }
 
             let value = self.evaluate_expression(&hir_argument);
 
             if value == ComptimeValue::Error {
-                return HirExpression::error(span);
+                return hir_error(span);
             }
 
             values.push(value);
@@ -1762,30 +1700,30 @@ impl Elaborator<'_> {
             "C" => ExternAbi::C,
 
             unsupported => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Unsupported external ABI",
                     arguments[0].span,
                     format!("ABI `{unsupported}` is not supported; expected `C`"),
-                ));
+                );
 
-                return HirExpression::error(span);
+                return hir_error(span);
             }
         };
 
         if !matches!(function_type, Type::Function { .. }) {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Invalid external function type",
                 arguments[2].span,
                 format!("expected a function type, found `{function_type:?}`"),
-            ));
+            );
 
-            return HirExpression::error(span);
+            return hir_error(span);
         }
 
         let Some(external_symbol) =
             self.declare_external_function(abi, link_name, function_type, span)
         else {
-            return HirExpression::error(span);
+            return hir_error(span);
         };
 
         HirExpression {
@@ -1839,7 +1777,7 @@ impl Elaborator<'_> {
             );
 
             if let Some(existing_span) = existing_span {
-                self.diagnostics.push(Diagnostic::error_with_extra_labels(
+                self.diagnostics.error_with_extra_labels(
                     "Conflicting external function declarations",
                     declaration_span,
                     message,
@@ -1847,13 +1785,13 @@ impl Elaborator<'_> {
                         existing_span,
                         "previous declaration is here".to_owned(),
                     )],
-                ));
+                );
             } else {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Conflicting external function declarations",
                     declaration_span,
                     message,
-                ));
+                );
             }
 
             return None;
@@ -1885,7 +1823,7 @@ impl Elaborator<'_> {
 
         if actual_type == Type::Unknown && self.pending_bindings.contains_key(&symbol) {
             if self.ensure_binding_elaborated(symbol).is_err() {
-                return HirExpression::error(span);
+                return hir_error(span);
             }
 
             actual_type = self.symbols.get(symbol).type_.clone();
@@ -1894,31 +1832,23 @@ impl Elaborator<'_> {
         if actual_type == Type::Unknown {
             let name = &self.symbols.get(symbol).name;
 
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Identifier not yet bound",
                 span,
                 format!("Cannot determine the type of `{name}`"),
-            ));
+            );
 
-            return HirExpression::error(span);
+            return hir_error(span);
         }
 
         if actual_type == Type::Error {
-            return HirExpression::error(span);
+            return hir_error(span);
         }
 
         if let Some(expected_type) = expected {
             if *expected_type != Type::Error && *expected_type != actual_type {
-                self.diagnostics.push(Diagnostic::error(
-                    format!(
-                        "Expected an expression of type `{:?}` but got an expression of type `{:?}`",
-                        expected_type, actual_type
-                    ),
-                    span,
-                    format!("Should be of type `{:?}`", expected_type),
-                ));
-
-                return HirExpression::error(span);
+                self.diagnostics.type_mismatch(span, expected_type, actual_type);
+                return hir_error(span);
             }
         }
 
@@ -2042,4 +1972,8 @@ fn collect_expression_symbols(expression: &HirExpression, symbols: &mut HashSet<
         TypeValue(_) | FunctionTemplate(_) | KnownFunction(_) | Integer(_) | Bool(_)
         | StringLiteral(_) | Module(_) | Error => {}
     }
+}
+
+fn hir_error(span: Span) -> HirExpression {
+    HirExpression::error(span)
 }

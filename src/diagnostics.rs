@@ -5,6 +5,7 @@ use codespan_reporting::term::{
     self,
     termcolor::{ColorChoice, StandardStream},
 };
+use std::fmt::{Debug, Display};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -95,6 +96,14 @@ impl Diagnostic {
         )
     }
 
+    pub fn type_mismatch(span: Span, expected: impl Display, got: impl Display) -> Self {
+        Self::error(
+            "Type mismatch",
+            span,
+            format!("Expected `{}`, got `{}`", expected, got),
+        )
+    }
+
     pub fn error_with_extra_labels(
         message: impl Into<String>,
         span: Span,
@@ -111,6 +120,42 @@ impl Diagnostic {
 
     pub fn warning(message: String, span: Span, text: String) -> Self {
         Self::new(Severity::Warning, message, Label::new(span, text), vec![])
+    }
+}
+
+pub trait Diagnostics {
+    fn add_diagnostic(&mut self, diagnostic: Diagnostic);
+    fn error(&mut self, message: impl Into<String>, span: Span, text: impl Into<String>) {
+        self.add_diagnostic(Diagnostic::error(message, span, text))
+    }
+
+    fn warning(&mut self, message: impl Into<String>, span: Span, text: impl Into<String>) {
+        self.add_diagnostic(Diagnostic::warning(message.into(), span, text.into()))
+    }
+
+    fn type_mismatch(&mut self, span: Span, expected: impl Display, got: impl Display) {
+        self.add_diagnostic(Diagnostic::type_mismatch(span, expected, got));
+    }
+
+    fn error_with_extra_labels(
+        &mut self,
+        message: impl Into<String>,
+        span: Span,
+        text: impl Into<String>,
+        extra_labels: Vec<Label>,
+    ) {
+        self.add_diagnostic(Diagnostic::error_with_extra_labels(
+            message,
+            span,
+            text,
+            extra_labels,
+        ))
+    }
+}
+
+impl Diagnostics for Vec<Diagnostic> {
+    fn add_diagnostic(&mut self, diagnostic: Diagnostic) {
+        self.push(diagnostic);
     }
 }
 

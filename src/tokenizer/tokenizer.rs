@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::source::SourceFile;
 use crate::tokenizer::{Token, TokenKind};
 use std::str::Chars;
@@ -32,7 +32,7 @@ impl<'src> Tokenizer<'src> {
             if next.is_ascii_digit() {
                 match self.tokenize_number_literal() {
                     Ok(token) => self.tokens.push(token),
-                    Err(diagnostic) => self.diagnostics.push(diagnostic),
+                    Err(diagnostic) => self.diagnostics.add_diagnostic(diagnostic),
                 }
                 continue;
             }
@@ -40,7 +40,7 @@ impl<'src> Tokenizer<'src> {
             if next.is_ascii_alphabetic() {
                 match self.tokenize_identifier() {
                     Ok(token) => self.tokens.push(token),
-                    Err(diagnostic) => self.diagnostics.push(diagnostic),
+                    Err(diagnostic) => self.diagnostics.add_diagnostic(diagnostic),
                 }
                 continue;
             }
@@ -56,14 +56,14 @@ impl<'src> Tokenizer<'src> {
                 while let Some(next) = self.peek() && next != '"' {
                     match next {
                         '\n' | '\\' => {
-                            self.diagnostics.push(Diagnostic::error(
+                            self.diagnostics.error(
                                 "Unsupported character in string literal",
                                 self.source.span(self.index, self.index + 1),
                                 format!(
                                     "{} is not supported",
                                     next
                                 )
-                            ));
+                            );
                         }
 
                         _ => {}
@@ -73,15 +73,15 @@ impl<'src> Tokenizer<'src> {
 
                 match self.peek() {
                     None => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Unterminated string literal",
                             self.source.span(self.index, self.index),
                             ":("
-                        ));
+                        );
                     }
                     Some(_) => {
                         if let Err(diagnostic) = self.expect('"') {
-                            self.diagnostics.push(diagnostic);
+                            self.diagnostics.add_diagnostic(diagnostic);
                         }
                     }
                 }
@@ -96,11 +96,11 @@ impl<'src> Tokenizer<'src> {
                 continue;
             }
 
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 format!("Unexpected character '{next}'"),
                 self.source.span(self.index, self.index + 1),
                 "Evil :(".to_owned(),
-            ));
+            );
             self.next();
         }
 
@@ -180,7 +180,7 @@ impl<'src> Tokenizer<'src> {
     ) -> Option<Token> {
         let start = self.index;
         if let Err(diagnostic) = self.expect(char1) {
-            self.diagnostics.push(diagnostic);
+            self.diagnostics.add_diagnostic(diagnostic);
             None
         } else {
             for (char, token) in second_chars.iter().zip(second_tokens) {

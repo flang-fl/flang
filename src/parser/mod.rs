@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::parser::ast::Phase::Comptime;
 use crate::parser::ast::{
     BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
@@ -282,11 +282,11 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
         if let ExpressionData::Intrinsic { name } = &callee.data {
             if self.source.span_text(*name) == "import" {
                 if arguments.len() != 1 {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Invalid import arguments",
                         span,
                         "@import expects exactly one string literal",
-                    ));
+                    );
 
                     return None;
                 }
@@ -294,11 +294,11 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 let argument = &arguments[0];
 
                 if !matches!(&argument.data, ExpressionData::StringLiteral) {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Import path must be a string literal",
                         argument.span,
                         "Computed import paths are not supported yet",
-                    ));
+                    );
 
                     return None;
                 }
@@ -425,7 +425,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             });
         }
 
-        self.diagnostics.push(Diagnostic::error(
+        self.diagnostics.error(
             "Unexpected start of expression",
             if let Some(token) = self.peek() {
                 token.span
@@ -440,18 +440,18 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                     "EOF"
                 }
             ),
-        ));
+        );
 
         None
     }
 
     fn finish_function_type(&mut self, signature: ParsedFunctionSignature) -> Option<Expression> {
         if let Some(first) = signature.comptime_args.first() {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Comptime parameters in function types are not supported yet",
                 first.span,
                 "remove the comptime parameter list",
-            ));
+            );
 
             return None;
         }
@@ -465,11 +465,11 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 }
 
                 ParsedFunctionParameter::Named(parameter) => {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Named function-type parameters are not supported yet",
                         parameter.span,
                         "write only the parameter type",
-                    ));
+                    );
 
                     return None;
                 }
@@ -505,11 +505,11 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 }
 
                 ParsedFunctionParameter::Unnamed(type_expression) => {
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.error(
                         "Function implementation parameters require names",
                         type_expression.span,
                         "add an internal parameter name",
-                    ));
+                    );
 
                     return None;
                 }
@@ -802,7 +802,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
             }
 
             _ => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Unexpected start of Statement",
                     match self.peek() {
                         Some(token) => token.span,
@@ -815,7 +815,7 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                             None => "EOF",
                         }
                     ),
-                ));
+                );
 
                 None
             }
@@ -908,21 +908,21 @@ impl<'src, 'tokens> Parser<'src, 'tokens> {
                 .map(|token| self.source.span(token.span.end, token.span.end))
                 .unwrap_or(self.source.span(0, 0));
 
-            self.diagnostics.push(Diagnostic::error(
-                "Expected Token found EOF".to_owned(),
+            self.diagnostics.error(
+                "Expected Token found EOF",
                 span,
-                description.to_owned(),
-            ));
+                description,
+            );
 
             return None;
         };
 
         if token.kind != kind {
-            self.diagnostics.push(Diagnostic::error(
-                "Unexpected Token".to_owned(),
+            self.diagnostics.error(
+                "Unexpected Token",
                 token.span,
-                description.to_owned(),
-            ));
+                description,
+            );
 
             return None;
         }

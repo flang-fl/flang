@@ -1,5 +1,5 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue};
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::elaboration::Elaborator;
 use crate::parser::ast::{BinaryOperator, Phase, UnaryOperator};
 use crate::semantic::hir::{
@@ -60,11 +60,11 @@ impl Elaborator<'_> {
                     }
 
                     HirPlaceData::Index { .. } => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Arrays are not supported at compile time right now",
                             statement.span,
                             ":(",
-                        ));
+                        );
 
                         return EvaluationFlow::Error;
                     }
@@ -110,11 +110,11 @@ impl Elaborator<'_> {
                     }
 
                     _ => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Internal Compiler Error",
                             condition.span,
                             "not a boolean expression",
-                        ));
+                        );
                         return EvaluationFlow::Error;
                     }
                 }
@@ -184,11 +184,11 @@ impl Elaborator<'_> {
 
             HirExpressionData::Index { .. }
             | HirExpressionData::ArrayRepeatInitialization { .. } => {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Arrays are currently unsupported in comptime",
                     expression.span,
                     ":(",
-                ));
+                );
 
                 ComptimeValue::Error
             }
@@ -240,24 +240,24 @@ impl Elaborator<'_> {
                         },
                     ) => {
                         if !type_.is_signed() {
-                            self.diagnostics.push(Diagnostic::error(
+                            self.diagnostics.error(
                                 "Cannot negate unsigned integer",
                                 expression.span,
                                 format!(
                                     "`{}` is unsigned",
                                     type_.name()
                                 )
-                            ));
+                            );
 
                             return ComptimeValue::Error;
                         }
 
                         let Some(value) = value.checked_neg() else {
-                            self.diagnostics.push(Diagnostic::error(
+                            self.diagnostics.error(
                                 "Integer overflow",
                                 expression.span,
                                 "negation overflowed"
-                            ));
+                            );
 
                             return ComptimeValue::Error;
                         };
@@ -266,14 +266,14 @@ impl Elaborator<'_> {
                             value,
                             &self.target
                         ) {
-                            self.diagnostics.push(Diagnostic::error(
+                            self.diagnostics.error(
                                 "Integer overflow",
                                 expression.span,
                                 format!(
                                     "result `{value}` does not fit in `{}`",
                                     type_.name()
                                 )
-                            ));
+                            );
 
                             return ComptimeValue::Error;
                         }
@@ -287,11 +287,11 @@ impl Elaborator<'_> {
                     (_, ComptimeValue::Error) => ComptimeValue::Error,
 
                     (UnaryOperator::Negate, _) => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Evil bad",
                             expression.span,
                             "Fix my diagnostic later"
-                        ));
+                        );
 
                         ComptimeValue::Error
                     }
@@ -316,7 +316,7 @@ impl Elaborator<'_> {
                         },
                     ) => {
                         if lhs_type != rhs_type {
-                            self.diagnostics.push(Diagnostic::error(
+                            self.diagnostics.error(
                                 "Mismatched integer types",
                                 expression.span,
                                 format!(
@@ -324,7 +324,7 @@ impl Elaborator<'_> {
                                     lhs_type.name(),
                                     rhs_type.name()
                                 ),
-                            ));
+                            );
 
                             return ComptimeValue::Error;
                         }
@@ -353,11 +353,11 @@ impl Elaborator<'_> {
 
                                     BinaryOperator::Divide => {
                                         if rhs == 0 {
-                                            self.diagnostics.push(Diagnostic::error(
+                                            self.diagnostics.error(
                                                 "Division by zero",
                                                 expression.span,
                                                 "the divisor evaluates to zero",
-                                            ));
+                                            );
 
                                             return ComptimeValue::Error;
                                         }
@@ -369,11 +369,11 @@ impl Elaborator<'_> {
                                 };
 
                                 let Some(result) = result else {
-                                    self.diagnostics.push(Diagnostic::error(
+                                    self.diagnostics.error(
                                         "Integer overflow",
                                         expression.span,
                                         format!("this operation overflows `{}`", lhs_type.name()),
-                                    ));
+                                    );
 
                                     return ComptimeValue::Error;
                                 };
@@ -382,14 +382,14 @@ impl Elaborator<'_> {
                                     result,
                                     &self.target
                                 ) {
-                                    self.diagnostics.push(Diagnostic::error(
+                                    self.diagnostics.error(
                                         "Integer overflow",
                                         expression.span,
                                         format!(
                                             "result `{result}` does not fit in `{}`",
                                             lhs_type.name()
                                         ),
-                                    ));
+                                    );
 
                                     return ComptimeValue::Error;
                                 }
@@ -406,25 +406,25 @@ impl Elaborator<'_> {
                         BinaryOperator::NotEqual => ComptimeValue::Bool(lhs != rhs),
 
                         _ => {
-                            self.diagnostics.push(Diagnostic::error(
+                            self.diagnostics.error(
                                 "Invalid boolean operation",
                                 expression.span,
                                 format!("operator `{operator:?}` cannot be applied to booleans"),
-                            ));
+                            );
 
                             ComptimeValue::Error
                         }
                     },
 
                     (lhs, rhs) => {
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "Invalid compile-time binary operation",
                             expression.span,
                             format!(
                                 "operator `{operator:?}` cannot be applied to \
                                 `{lhs:?}` and `{rhs:?}`"
                             )
-                        ));
+                        );
 
                         ComptimeValue::Error
                     }
@@ -440,14 +440,14 @@ impl Elaborator<'_> {
                     ComptimeValue::ExternFunction(symbol_id) => {
                         let symbol = self.symbols.get(symbol_id);
 
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.error(
                             "External function unavailable at comptime",
                             callee.span,
                             format!(
                                 "external function `{}` can only be called at runtime",
                                 symbol.name
                             )
-                        ));
+                        );
 
                         return ComptimeValue::Error
                     }
@@ -568,11 +568,11 @@ impl Elaborator<'_> {
                     }
                 };
 
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Value unavailable at compile time",
                     expression.span,
                     message,
-                ));
+                );
 
                 ComptimeValue::Error
             }
@@ -598,11 +598,11 @@ impl Elaborator<'_> {
         if function.return_type == Type::Unit {
             ComptimeValue::Unit
         } else {
-            self.diagnostics.push(Diagnostic::error(
+            self.diagnostics.error(
                 "Function is missing a return statement",
                 function.body.span,
                 "no return :(",
-            ));
+            );
 
             ComptimeValue::Error
         }

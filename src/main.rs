@@ -1004,7 +1004,7 @@ mod tests {
           comp N = 12;
           comp main = fn() -> N { return 7; };
           "#,
-            "Expected type `type` got `Integer(I64)`",
+            "Expected `type`, got `Integer(I64)`",
         );
     }
 

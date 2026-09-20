@@ -2,7 +2,7 @@ use crate::TargetInfo;
 use crate::comptime::{
     ComptimeValue, FunctionId, FunctionStore, FunctionTemplateStore, ValueStore,
 };
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
 use crate::parser::ast::{ItemData, Program, Visibility};
 use crate::semantic::hir::{HirBinding, HirProgram};
@@ -332,11 +332,11 @@ impl<'src> Elaborator<'src> {
             let name = self.sources.span_text(binding.name).to_owned();
 
             if let Some(_) = self.environment.lookup(&name) {
-                self.diagnostics.push(Diagnostic::error(
+                self.diagnostics.error(
                     "Duplicate binding found",
                     item.span,
                     "Evil :(",
-                ));
+                );
 
                 continue;
             }

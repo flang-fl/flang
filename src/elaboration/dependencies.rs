@@ -1,5 +1,5 @@
 use crate::comptime::ComptimeValue;
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::elaboration::Elaborator;
 use crate::parser::ast::{Binding, Phase};
 use crate::semantic::hir::HirBinding;
@@ -215,10 +215,10 @@ impl Elaborator<'_> {
                 "dependency cycles should only contain source bindings"
             );
 
-        self.diagnostics.push(Diagnostic::error(
+        self.diagnostics.error(
             title,
             span,
             format!("{explanation}: {path}")
-        ))
+        )
     }
 }
