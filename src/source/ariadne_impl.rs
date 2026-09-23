@@ -1,6 +1,6 @@
-use std::fmt::{Debug, Display};
-use ariadne::Source;
 use crate::source::{SourceFileManager, SourceId, Span};
+use ariadne::Source;
+use std::fmt::{Debug, Display};
 
 impl ariadne::Cache<SourceId> for SourceFileManager {
     type Storage = String;

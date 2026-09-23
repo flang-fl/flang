@@ -16,7 +16,7 @@ pub enum ToolchainError {
     ClangFailed {
         status: Option<i32>,
         stderr: String,
-    }
+    },
 }
 
 pub fn build_executable(
@@ -63,7 +63,7 @@ pub fn build_executable(
         return Err(ToolchainError::ClangFailed {
             status: output.status.code(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+        });
     }
 
     Ok(())

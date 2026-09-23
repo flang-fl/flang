@@ -62,7 +62,7 @@ impl<'src> Tokenizer<'src> {
                                 format!(
                                     "{} is not supported",
                                     next
-                                )
+                                ),
                             );
                         }
 
@@ -76,7 +76,7 @@ impl<'src> Tokenizer<'src> {
                         self.diagnostics.error(
                             "Unterminated string literal",
                             self.source.span(self.index, self.index),
-                            ":("
+                            ":(",
                         );
                     }
                     Some(_) => {
@@ -90,7 +90,7 @@ impl<'src> Tokenizer<'src> {
 
                 self.tokens.push(Token {
                     span: self.source.span(start, end),
-                    kind: TokenKind::StringLiteral
+                    kind: TokenKind::StringLiteral,
                 });
 
                 continue;
@@ -160,7 +160,7 @@ impl<'src> Tokenizer<'src> {
 
         // Optional suffix like `5i32`
         while let Some(next) = self.peek()
-              && next.is_ascii_alphanumeric()
+            && next.is_ascii_alphanumeric()
         {
             self.next();
         }
@@ -220,7 +220,7 @@ impl<'src> Tokenizer<'src> {
             '+' => {
                 return self.single_or_double_tokens(
                     '+', &['='],
-                    TokenKind::Plus, &[TokenKind::PlusEq]
+                    TokenKind::Plus, &[TokenKind::PlusEq],
                 )
             }
             '-' => {
@@ -231,41 +231,41 @@ impl<'src> Tokenizer<'src> {
             '*' => {
                 return self.single_or_double_tokens(
                     '*', &['='],
-                    TokenKind::Star, &[TokenKind::StarEq]
+                    TokenKind::Star, &[TokenKind::StarEq],
                 )
-            },
+            }
             '/' => {
                 return self.single_or_double_tokens(
                     '/', &['='],
-                    TokenKind::Slash, &[TokenKind::SlashEq]
+                    TokenKind::Slash, &[TokenKind::SlashEq],
                 )
-            },
+            }
 
             '=' => {
                 return self.single_or_double_tokens(
                     '=', &['='],
-                    TokenKind::Eq, &[TokenKind::EqEq]
+                    TokenKind::Eq, &[TokenKind::EqEq],
                 );
             }
 
             '!' => {
                 return self.single_or_double_tokens(
                     '!', &['='],
-                    TokenKind::Bang, &[TokenKind::BangEq]
+                    TokenKind::Bang, &[TokenKind::BangEq],
                 );
             }
 
             '<' => {
                 return self.single_or_double_tokens(
                     '<', &['='],
-                    TokenKind::LessThan, &[TokenKind::LessThanOrEqual]
+                    TokenKind::LessThan, &[TokenKind::LessThanOrEqual],
                 )
             }
 
             '>' => {
                 return self.single_or_double_tokens(
                     '>', &['='],
-                    TokenKind::GreaterThan, &[TokenKind::GreaterThanOrEqual]
+                    TokenKind::GreaterThan, &[TokenKind::GreaterThanOrEqual],
                 )
             }
 
@@ -314,15 +314,15 @@ impl<'src> Tokenizer<'src> {
 
 #[cfg(test)]
 mod tests {
-    use ariadne::Source;
-    use crate::source::SourceId;
     use super::*;
+    use crate::source::SourceId;
+    use ariadne::Source;
 
     fn source(text: &str) -> SourceFile {
         SourceFile {
             id: SourceId(0),
             name: "test.fl".to_owned(),
-            source: Source::from(text.to_owned())
+            source: Source::from(text.to_owned()),
         }
     }
 
@@ -354,14 +354,14 @@ mod tests {
     #[test]
     fn tokenizes_ascii_string_literal() {
         assert_single_string(
-            "\"getchar\"", "getchar"
+            "\"getchar\"", "getchar",
         );
     }
 
     #[test]
     fn tokenizes_empty_string_literal() {
         assert_single_string(
-            "\"\"", ""
+            "\"\"", "",
         );
     }
 
@@ -369,7 +369,7 @@ mod tests {
     fn tokenizes_utf8_string_literal() {
         assert_single_string(
             "\"héllo 世界\"",
-            "héllo 世界"
+            "héllo 世界",
         );
     }
 

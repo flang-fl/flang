@@ -4,6 +4,7 @@ use crate::comptime::{
 };
 use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::elaboration::dependencies::{PendingBinding, WorkStatus};
+use crate::imports::LoadedProgram;
 use crate::parser::ast::{ItemData, Program, Visibility};
 use crate::semantic::hir::{HirBinding, HirProgram};
 use crate::semantic::symbols::{
@@ -13,7 +14,6 @@ use crate::semantic::symbols::{
 use crate::semantic::types::{IntegerType, SpecializationKey, Type};
 use crate::source::{SourceFileManager, SourceId, Span};
 use std::collections::{HashMap, HashSet};
-use crate::imports::LoadedProgram;
 
 mod analysis;
 mod dependencies;
@@ -242,7 +242,7 @@ impl<'src> Elaborator<'src> {
 
     pub fn elaborate_loaded(
         mut self,
-        loaded: LoadedProgram
+        loaded: LoadedProgram,
     ) -> Result<ElaboratedProgram, Vec<Diagnostic>> {
         let mut source_modules = HashMap::new();
 
@@ -498,7 +498,7 @@ mod tests {
               return helper + n;
           };
           "#
-            .into(),
+                .into(),
         );
 
         let source_b = sources.add_file(
@@ -507,7 +507,7 @@ mod tests {
           comp helper = 2;
           comp answer = library.add<helper>();
           "#
-            .into(),
+                .into(),
         );
 
         let parse = |id| {
@@ -664,7 +664,7 @@ mod tests {
 
             let result = elaborator.ensure_binding_evaluated(answer);
 
-            assert!(result.is_err(), "access to library.{member} should fail",);
+            assert!(result.is_err(), "access to library.{member} should fail", );
 
             let diagnostic = elaborator
                 .diagnostics

@@ -338,7 +338,7 @@ mod tests {
                   return @import("./other.fl").answer;
               };
               "#
-            .into(),
+                .into(),
         );
 
         let source = sources.get_file(id);
@@ -467,13 +467,13 @@ mod tests {
             nested.join("left.fl"),
             r#"comp shared = @import("../shared.fl");"#,
         )
-        .expect("write left");
+            .expect("write left");
 
         std::fs::write(
             directory.path().join("right.fl"),
             r#"comp shared = @import("./shared.fl");"#,
         )
-        .expect("write right");
+            .expect("write right");
 
         std::fs::write(directory.path().join("shared.fl"), "pub comp answer = 42;")
             .expect("write shared");

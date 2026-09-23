@@ -1,5 +1,5 @@
 use crate::comptime::ComptimeValue;
-use crate::diagnostics::{Diagnostic, Diagnostics};
+use crate::diagnostics::Diagnostics;
 use crate::elaboration::Elaborator;
 use crate::parser::ast::{Binding, Phase};
 use crate::semantic::hir::HirBinding;
@@ -11,7 +11,7 @@ pub(super) enum WorkStatus {
     Pending,
     Active,
     Complete,
-    Failed
+    Failed,
 }
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub(super) struct PendingBinding {
 impl Elaborator<'_> {
     pub(super) fn ensure_binding_elaborated(
         &mut self,
-        symbol: SymbolId
+        symbol: SymbolId,
     ) -> Result<HirBinding, ()> {
         let status = self
             .elaboration_status
@@ -97,7 +97,7 @@ impl Elaborator<'_> {
 
     pub(super) fn ensure_binding_evaluated(
         &mut self,
-        symbol: SymbolId
+        symbol: SymbolId,
     ) -> Result<ComptimeValue, ()> {
         let status = self
             .evaluation_status
@@ -191,7 +191,7 @@ impl Elaborator<'_> {
         title: &str,
         explanation: &str,
         stack: &[SymbolId],
-        repeated: SymbolId
+        repeated: SymbolId,
     ) {
         let cycle_start = stack
             .iter()
@@ -218,7 +218,7 @@ impl Elaborator<'_> {
         self.diagnostics.error(
             title,
             span,
-            format!("{explanation}: {path}")
+            format!("{explanation}: {path}"),
         )
     }
 }

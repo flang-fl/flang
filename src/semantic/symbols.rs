@@ -1,8 +1,8 @@
 use crate::parser::ast::{Phase, Visibility};
 use crate::semantic::types::Type;
 use crate::source::{SourceId, Span};
-use std::collections::HashMap;
 use crate::util::Store;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(usize);
@@ -22,7 +22,7 @@ impl From<ModuleId> for usize {
 
 pub struct Module {
     pub source: SourceId,
-    pub scope: ScopeId
+    pub scope: ScopeId,
 }
 
 pub type ModuleStore = Store<ModuleId, Module>;

@@ -1,5 +1,5 @@
 use crate::comptime::{FunctionId, FunctionTemplateId};
-use crate::parser::ast::{BinaryOperator, Expression, Phase, UnaryOperator};
+use crate::parser::ast::{BinaryOperator, Phase, UnaryOperator};
 use crate::semantic::symbols::{ModuleId, SymbolId};
 use crate::semantic::types::Type;
 use crate::source::Span;
@@ -13,18 +13,18 @@ pub struct HirProgram {
 pub struct HirPlace {
     pub span: Span,
     pub type_: Type,
-    pub data: HirPlaceData
+    pub data: HirPlaceData,
 }
 
 #[derive(Debug, Clone)]
 pub enum HirPlaceData {
     Symbol(SymbolId),
-    
+
     Index {
         array: SymbolId,
         index: HirExpression,
         array_size: usize,
-    }
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +77,7 @@ pub enum HirExpressionData {
     StringLiteral(String),
     Unary {
         operator: UnaryOperator,
-        operand: Box<HirExpression>
+        operand: Box<HirExpression>,
     },
     Binary {
         lhs: Box<HirExpression>,
@@ -155,7 +155,7 @@ pub enum HirStatementData {
     },
     While {
         condition: HirExpression,
-        while_block: HirBlock
+        while_block: HirBlock,
     },
     Assignment {
         target: HirPlace,

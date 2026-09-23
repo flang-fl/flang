@@ -1,5 +1,5 @@
 use crate::comptime::{ComptimeFunction, ComptimeValue};
-use crate::diagnostics::{Diagnostic, Diagnostics};
+use crate::diagnostics::Diagnostics;
 use crate::elaboration::Elaborator;
 use crate::parser::ast::{BinaryOperator, Phase, UnaryOperator};
 use crate::semantic::hir::{
@@ -246,7 +246,7 @@ impl Elaborator<'_> {
                                 format!(
                                     "`{}` is unsigned",
                                     type_.name()
-                                )
+                                ),
                             );
 
                             return ComptimeValue::Error;
@@ -256,7 +256,7 @@ impl Elaborator<'_> {
                             self.diagnostics.error(
                                 "Integer overflow",
                                 expression.span,
-                                "negation overflowed"
+                                "negation overflowed",
                             );
 
                             return ComptimeValue::Error;
@@ -264,7 +264,7 @@ impl Elaborator<'_> {
 
                         if !type_.contains(
                             value,
-                            &self.target
+                            &self.target,
                         ) {
                             self.diagnostics.error(
                                 "Integer overflow",
@@ -272,7 +272,7 @@ impl Elaborator<'_> {
                                 format!(
                                     "result `{value}` does not fit in `{}`",
                                     type_.name()
-                                )
+                                ),
                             );
 
                             return ComptimeValue::Error;
@@ -280,7 +280,7 @@ impl Elaborator<'_> {
 
                         ComptimeValue::Integer {
                             value,
-                            type_
+                            type_,
                         }
                     }
 
@@ -290,7 +290,7 @@ impl Elaborator<'_> {
                         self.diagnostics.error(
                             "Evil bad",
                             expression.span,
-                            "Fix my diagnostic later"
+                            "Fix my diagnostic later",
                         );
 
                         ComptimeValue::Error
@@ -380,7 +380,7 @@ impl Elaborator<'_> {
 
                                 if !lhs_type.contains(
                                     result,
-                                    &self.target
+                                    &self.target,
                                 ) {
                                     self.diagnostics.error(
                                         "Integer overflow",
@@ -423,7 +423,7 @@ impl Elaborator<'_> {
                             format!(
                                 "operator `{operator:?}` cannot be applied to \
                                 `{lhs:?}` and `{rhs:?}`"
-                            )
+                            ),
                         );
 
                         ComptimeValue::Error
@@ -446,10 +446,10 @@ impl Elaborator<'_> {
                             format!(
                                 "external function `{}` can only be called at runtime",
                                 symbol.name
-                            )
+                            ),
                         );
 
-                        return ComptimeValue::Error
+                        return ComptimeValue::Error;
                     }
 
                     _ => {

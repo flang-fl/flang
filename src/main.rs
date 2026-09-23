@@ -1,8 +1,6 @@
 use crate::diagnostics::{Diagnostic, PrintDiagnostics};
 use crate::elaboration::Elaborator;
-use crate::parser::Parser;
-use crate::source::{SourceFile, SourceFileManager, SourceId, Span};
-use crate::tokenizer::Tokenizer;
+use crate::source::{SourceFileManager, SourceId, Span};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use std::{env, fs};
@@ -68,7 +66,7 @@ fn main() {
             return a + b;
         }
         "#
-        .to_owned(),
+            .to_owned(),
     );
 
     let entry = file_manager.add_file(
@@ -242,7 +240,7 @@ mod tests {
             };
             "#,
         )
-        .expect("program should compile");
+            .expect("program should compile");
 
         assert!(
             llvm.contains("define i64 @flang_fn_0()"),
@@ -788,7 +786,7 @@ mod tests {
           };
           "#,
         )
-        .expect("extern function should compile");
+            .expect("extern function should compile");
 
         assert!(
             llvm.contains("declare i32 @putchar(i32)"),
@@ -817,7 +815,7 @@ mod tests {
           };
           "#,
         )
-        .expect("extern function with computed arguments should compile");
+            .expect("extern function with computed arguments should compile");
 
         assert!(
             llvm.contains("declare i32 @getchar()"),

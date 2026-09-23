@@ -1,5 +1,5 @@
-use ariadne::{Source};
 use crate::source::{SourceFile, SourceId, Span};
+use ariadne::Source;
 
 pub struct SourceFileManager {
     files: Vec<SourceFile>,

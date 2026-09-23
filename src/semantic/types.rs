@@ -1,8 +1,8 @@
-use std::fmt;
+use crate::TargetInfo;
 use crate::comptime::FunctionTemplateId;
 use crate::semantic::symbols::ModuleId;
-use crate::TargetInfo;
 use fmt::Write;
+use std::fmt;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -50,17 +50,17 @@ impl Type {
 pub enum ComptimeKey {
     Integer {
         value: i128,
-        type_: IntegerType
+        type_: IntegerType,
     },
     Str(String),
     Type(Type),
-    Bool(bool)
+    Bool(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SpecializationKey {
     pub template: FunctionTemplateId,
-    pub arguments: Vec<ComptimeKey>
+    pub arguments: Vec<ComptimeKey>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

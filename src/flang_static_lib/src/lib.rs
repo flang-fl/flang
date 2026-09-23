@@ -1,4 +1,4 @@
-use std::io::{stdin, Read, stdout, Write};
+use std::io::{Read, Write, stdin, stdout};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn flang_read_byte() -> i64 {

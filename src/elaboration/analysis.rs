@@ -2,7 +2,7 @@ use super::Elaborator;
 use crate::comptime::{
     ComptimeFunction, ComptimeValue, FunctionId, FunctionTemplate, FunctionTemplateId,
 };
-use crate::diagnostics::{Diagnostic, Diagnostics, Label};
+use crate::diagnostics::{Diagnostics, Label};
 use crate::parser::ast::{
     BinaryOperator, Binding, Block, ElseBranch, Expression, ExpressionData, FunctionExpression, If,
     Phase, Statement, StatementData, TypeExpression, TypeExpressionData, UnaryOperator, Visibility,
@@ -416,7 +416,7 @@ impl Elaborator<'_> {
                     self.diagnostics.error(
                         "Unary negation requires an integer",
                         expression.span,
-                        format!("found operand of type `{:?}`", operand.type_,),
+                        format!("found operand of type `{:?}`", operand.type_, ),
                     );
 
                     return hir_error(expression.span);
@@ -426,7 +426,7 @@ impl Elaborator<'_> {
                     self.diagnostics.error(
                         "Cannot negate an unsigned integer",
                         expression.span,
-                        format!("`{}` is unsigned", integer_type.name(),),
+                        format!("`{}` is unsigned", integer_type.name(), ),
                     );
 
                     return hir_error(expression.span);
@@ -749,18 +749,16 @@ impl Elaborator<'_> {
                     }
 
                     StatementData::While(While {
-                        condition: _,
-                        while_block,
-                    }) => {
+                                             condition: _,
+                                             while_block,
+                                         }) => {
                         // if has_guaranteed_return(while_block) {
                         //     return true;
                         // }
                         // the body could execute 0 times
                     }
 
-                    _ => {
-
-                    }
+                    _ => {}
                 }
             }
 
@@ -816,9 +814,9 @@ impl Elaborator<'_> {
             }
 
             StatementData::While(While {
-                condition,
-                while_block,
-            }) => {
+                                     condition,
+                                     while_block,
+                                 }) => {
                 let condition = self.analyze_expression(condition, Some(&Type::Bool));
 
                 let while_block = self.analyze_block(while_block, return_type, false);
@@ -833,10 +831,10 @@ impl Elaborator<'_> {
             }
 
             StatementData::If(If {
-                condition,
-                then_block,
-                else_,
-            }) => {
+                                  condition,
+                                  then_block,
+                                  else_,
+                              }) => {
                 let condition = self.analyze_expression(condition, Some(&Type::Bool));
 
                 let then_block = self.analyze_block(then_block, return_type, false);
@@ -1344,7 +1342,7 @@ impl Elaborator<'_> {
             self.diagnostics.error(
                 "Cannot negate an unsigned integer",
                 result_span,
-                format!("`{}` is unsigned", integer_type.name(),),
+                format!("`{}` is unsigned", integer_type.name(), ),
             );
 
             return hir_error(result_span);
@@ -1358,7 +1356,7 @@ impl Elaborator<'_> {
             self.diagnostics.error(
                 "Integer literal out of range",
                 result_span,
-                format!("`{value}` does not fit in `{}`", integer_type.name(),),
+                format!("`{value}` does not fit in `{}`", integer_type.name(), ),
             );
 
             return hir_error(result_span);
@@ -1581,8 +1579,8 @@ impl Elaborator<'_> {
 
         if return_type == Type::Error
             || hir_parameters
-                .iter()
-                .any(|parameter| parameter.type_ == Type::Error)
+            .iter()
+            .any(|parameter| parameter.type_ == Type::Error)
         {
             return None;
         }
@@ -1686,9 +1684,9 @@ impl Elaborator<'_> {
         }
 
         let [
-            ComptimeValue::String(abi),
-            ComptimeValue::String(link_name),
-            ComptimeValue::Type(function_type),
+        ComptimeValue::String(abi),
+        ComptimeValue::String(link_name),
+        ComptimeValue::Type(function_type),
         ] = values.as_slice()
         else {
             // The expected types above should make this impossible unless

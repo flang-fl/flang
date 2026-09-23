@@ -21,7 +21,7 @@ impl SourceFile {
         Span {
             source: self.id,
             start,
-            end
+            end,
         }
     }
 
@@ -29,7 +29,7 @@ impl SourceFile {
         Span {
             source: self.id,
             start: self.source.len() - 1,
-            end: self.source.len() - 1
+            end: self.source.len() - 1,
         }
     }
 

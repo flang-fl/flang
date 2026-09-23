@@ -398,7 +398,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
             self.builder
                 .build_gep(*llvm_type, *pointer, &[zero, index], "array.element.ptr")
         }
-        .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())
     }
 
     fn emit_statement(
@@ -792,7 +792,7 @@ impl<'ctx, 'program> CodeGenerator<'ctx, 'program> {
                         self.builder.build_int_unsigned_div(lhs, rhs, "divtmp")
                     }
                 }
-                .map_err(|error| error.to_string())?;
+                    .map_err(|error| error.to_string())?;
 
                 Ok(result)
             }

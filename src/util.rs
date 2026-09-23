@@ -5,14 +5,17 @@ where
     Id: Into<usize> + From<usize>,
 {
     entries: Vec<Value>,
-    marker: PhantomData<fn() -> Id>
+    marker: PhantomData<fn() -> Id>,
 }
 
-impl<Id, Value> Store<Id, Value> where Id: Into<usize> + From<usize> {
+impl<Id, Value> Store<Id, Value>
+where
+    Id: Into<usize> + From<usize>,
+{
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
-            marker: PhantomData
+            marker: PhantomData,
         }
     }
 

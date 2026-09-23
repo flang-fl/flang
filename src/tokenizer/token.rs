@@ -1,4 +1,3 @@
-use std::fmt::{Display, Formatter, Pointer};
 use crate::source::Span;
 
 #[derive(Debug, Clone, Copy)]

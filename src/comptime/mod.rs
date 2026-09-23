@@ -24,7 +24,7 @@ pub struct FunctionTemplate {
 pub enum ComptimeValue {
     Integer {
         value: i128,
-        type_: IntegerType
+        type_: IntegerType,
     },
     Module(ModuleId),
     ExternFunction(SymbolId),
@@ -89,7 +89,7 @@ impl FunctionStore {
         self.functions.get(id.0 as usize)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (FunctionId, &ComptimeFunction)> {
+    pub fn iter(&self) -> impl Iterator<Item=(FunctionId, &ComptimeFunction)> {
         self.functions
             .iter()
             .enumerate()
@@ -99,7 +99,7 @@ impl FunctionStore {
 
 #[derive(Debug)]
 pub struct FunctionTemplateStore {
-    templates: Vec<FunctionTemplate>
+    templates: Vec<FunctionTemplate>,
 }
 
 impl FunctionTemplateStore {
@@ -111,7 +111,7 @@ impl FunctionTemplateStore {
 
     pub fn insert(
         &mut self,
-        template: FunctionTemplate
+        template: FunctionTemplate,
     ) -> FunctionTemplateId {
         let id = FunctionTemplateId(self.templates.len() as u32);
 
@@ -121,7 +121,7 @@ impl FunctionTemplateStore {
 
     pub fn get(
         &self,
-        id: FunctionTemplateId
+        id: FunctionTemplateId,
     ) -> Option<&FunctionTemplate> {
         self.templates.get(id.0 as usize)
     }
@@ -130,5 +130,5 @@ impl FunctionTemplateStore {
 #[derive(Debug, Clone)]
 pub struct ComptimeFunction {
     pub hir: HirFunctionExpression,
-    pub captures: HashMap<SymbolId, ComptimeValue>
+    pub captures: HashMap<SymbolId, ComptimeValue>,
 }
